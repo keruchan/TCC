@@ -7,7 +7,6 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
     exit;
 }
 
-// Handle deletion
 if (isset($_GET['delid'])) {
     $id = intval($_GET['delid']);
     $del = $dbh->prepare("DELETE FROM tblcurriculum WHERE id = :id");
@@ -105,12 +104,15 @@ foreach ($curriculums as $row) {
         <div class="container-fluid">
             <div class="row">
                 <div class="col-lg-12">
-                    <div class="card alert">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4>Curriculum Overview</h4>
-                            <button class="btn btn-warning btn-sm" data-toggle="modal" data-target="#addModal">+ Add Subject</button>
+                    <div class="page-header">
+                        <div class="page-title">
+                            <h1>Curriculum <button class="btn btn-warning btn-sm ml-3" data-toggle="modal" data-target="#addModal">+ Add Subject</button></h1>
                         </div>
+                    </div>
+                    <div class="card alert">
                         <div class="card-body">
+                        <h4>Curriculum Overview</h4>
+
                             <?php foreach ($grouped as $course => $years): ?>
                                 <div class="card my-3">
                                     <div class="card-header bg-info text-white">
@@ -167,12 +169,14 @@ foreach ($curriculums as $row) {
     </div>
 </div>
 <script src="../assets/js/lib/jquery.min.js"></script>
+<script src="../assets/js/lib/jquery.nanoscroller.min.js"></script>
+<script src="../assets/js/lib/menubar/sidebar.js"></script>
+<script src="../assets/js/lib/preloader/pace.min.js"></script>
 <script src="../assets/js/lib/bootstrap.min.js"></script>
 <script src="../assets/js/scripts.js"></script>
 </body>
 </html>
 
-<!-- Add Subject Modal -->
 <div class="modal fade" id="addModal" tabindex="-1" role="dialog" aria-labelledby="addModalLabel" aria-hidden="true">
   <div class="modal-dialog" role="document">
     <form method="post" action="insert_curriculum.php" class="modal-content">

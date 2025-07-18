@@ -9,6 +9,8 @@
                     <li><a href="course.php"><i class="ti-files"></i>Course</a></li>
                     <li><a href="subject.php"><i class="ti-files"></i>Subject</a></li>
                     <li><a href="class.php"><i class="ti-files"></i>Class Management</a></li>
+                    <li><a href="time.php"><i class="ti-files"></i>Time Management</a></li>
+
                      
                 
                     <li class="label">Apps</li>

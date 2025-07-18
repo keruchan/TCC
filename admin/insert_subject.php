@@ -16,15 +16,27 @@ if (isset($_POST['submit'])) {
     $tags = $_POST['tags'] ?? [];
     $tsasaid = $_SESSION['tsasaid'];
 
+    // Combine time durations
+    $num_meetings = intval($_POST['num_meetings']);
+    $time_durations = [];
+    for ($i = 1; $i <= $num_meetings; $i++) {
+        $duration = intval($_POST['time_duration_' . $i] ?? 0);
+        if ($duration > 0) {
+            $time_durations[] = $duration;
+        }
+    }
+    $combined_duration = implode(',', $time_durations);
+
     try {
-        // Insert into tblsubject
-        $sql = "INSERT INTO tblsubject(subject_name, subject_code, units, description, date_created)
-                VALUES(:subject_name, :subject_code, :units, :description, NOW())";
+        // Insert into tblsubject with time_duration
+        $sql = "INSERT INTO tblsubject(subject_name, subject_code, units, description, time_duration, date_created)
+                VALUES(:subject_name, :subject_code, :units, :description, :time_duration, NOW())";
         $stmt = $dbh->prepare($sql);
         $stmt->bindParam(':subject_name', $subject_name, PDO::PARAM_STR);
         $stmt->bindParam(':subject_code', $subject_code, PDO::PARAM_STR);
         $stmt->bindParam(':units', $units, PDO::PARAM_INT);
         $stmt->bindParam(':description', $description, PDO::PARAM_STR);
+        $stmt->bindParam(':time_duration', $combined_duration, PDO::PARAM_STR);
         $stmt->execute();
         $subject_id = $dbh->lastInsertId();
 

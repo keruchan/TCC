@@ -9,25 +9,20 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
     exit;
 }
 
-// Dropdown data
 $academic_years = ['2024-25', '2025-26', '2026-27', '2027-28'];
 $semesters = ['1st', '2nd', 'summer'];
 $year_levels = ['1st', '2nd', '3rd', '4th'];
 
-// Get selection from POST
 $selected_year = $_POST['academic_year'] ?? '';
 $selected_sem = $_POST['semester'] ?? '';
 
-// Save sections
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_sections'])) {
     if ($selected_year && $selected_sem && isset($_POST['sections']) && is_array($_POST['sections'])) {
         foreach ($_POST['sections'] as $course_id => $levels) {
             foreach ($levels as $year_level => $section_count) {
                 if (is_numeric($section_count) && $section_count >= 0) {
-                    // Remove old record
                     $del = $dbh->prepare("DELETE FROM tblclass WHERE course_id = ? AND academic_year = ? AND semester = ? AND year_level = ?");
                     $del->execute([$course_id, $selected_year, $selected_sem, $year_level]);
-                    // Insert new value if >0
                     if ($section_count > 0) {
                         $ins = $dbh->prepare("INSERT INTO tblclass (course_id, academic_year, semester, year_level, section, date_created) VALUES (?, ?, ?, ?, ?, NOW())");
                         $ins->execute([$course_id, $selected_year, $selected_sem, $year_level, $section_count]);
@@ -41,13 +36,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_sections'])) {
     }
 }
 
-// Get courses (fix column names to match your table)
 $courses = [];
 $stmt = $dbh->prepare("SELECT ID, CourseName FROM tblcourse ORDER BY CourseName");
 $stmt->execute();
 $courses = $stmt->fetchAll(PDO::FETCH_OBJ);
 
-// Get existing sections for selected year/sem
 $existing = [];
 if ($selected_year && $selected_sem) {
     $se = $dbh->prepare("SELECT course_id, year_level, section FROM tblclass WHERE academic_year=? AND semester=?");
@@ -67,8 +60,6 @@ if ($selected_year && $selected_sem) {
     <link href="../assets/css/lib/bootstrap.min.css" rel="stylesheet">
     <link href="../assets/css/lib/unix.css" rel="stylesheet">
     <link href="../assets/css/style.css" rel="stylesheet">
-
-    
 </head>
 <body>
 <?php include_once('includes/sidebar.php'); ?>
@@ -160,6 +151,10 @@ if ($selected_year && $selected_sem) {
     </div>
 </div>
 <script src="../assets/js/lib/jquery.min.js"></script>
+<script src="../assets/js/lib/jquery.nanoscroller.min.js"></script>
+<script src="../assets/js/lib/menubar/sidebar.js"></script>
+<script src="../assets/js/lib/preloader/pace.min.js"></script>
 <script src="../assets/js/lib/bootstrap.min.js"></script>
+<script src="../assets/js/scripts.js"></script>
 </body>
 </html>

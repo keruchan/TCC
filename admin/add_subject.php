@@ -35,6 +35,9 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
             cursor: pointer;
             color: #fff;
         }
+        .small-input {
+            max-width: 200px;
+        }
     </style>
 </head>
 <body>
@@ -70,6 +73,18 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
                                     <label for="description">Description / Objectives</label>
                                     <textarea name="description" rows="5" class="form-control" required></textarea>
                                 </div>
+
+                                <div class="form-group">
+                                    <label>Number of Meetings per Week</label>
+                                    <select name="num_meetings" id="num_meetings" class="form-control small-input" required>
+                                        <option value="">Select</option>
+                                        <?php for ($i = 1; $i <= 5; $i++): ?>
+                                            <option value="<?= $i ?>"><?= $i ?></option>
+                                        <?php endfor; ?>
+                                    </select>
+                                </div>
+
+                                <div id="time_duration_fields"></div>
 
                                 <div class="form-group">
                                     <label>Tags</label>
@@ -123,19 +138,6 @@ function createTagElement(tag) {
     return span;
 }
 
-function fetchSuggestions() {
-    fetch('get_tags.php')
-        .then(res => res.json())
-        .then(data => {
-            $("#tag-input").autocomplete({
-                source: data,
-                select: function(event, ui) {
-                    tagInput.value = ui.item.value;
-                }
-            });
-        });
-}
-
 document.getElementById('add-tag-btn').addEventListener('click', function () {
     const value = tagInput.value.trim().toLowerCase();
     if (value !== '' && !tags.has(value)) {
@@ -153,8 +155,28 @@ function validateTags() {
     return true;
 }
 
-// Load suggestions on page load
-fetchSuggestions();
+$('#num_meetings').change(function() {
+    var count = $(this).val();
+    var html = '';
+    for (var i = 1; i <= count; i++) {
+        html += '<div class="form-group">';
+        html += '<label>Duration (Minutes) for Meeting ' + i + '</label>';
+        html += '<input type="number" name="time_duration_' + i + '" class="form-control small-input" placeholder="e.g., 90" required>';
+        html += '</div>';
+    }
+    $('#time_duration_fields').html(html);
+});
+
+fetch('get_tags.php')
+    .then(res => res.json())
+    .then(data => {
+        $("#tag-input").autocomplete({
+            source: data,
+            select: function(event, ui) {
+                tagInput.value = ui.item.value;
+            }
+        });
+    });
 </script>
 <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
 <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">

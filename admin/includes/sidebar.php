@@ -5,13 +5,12 @@
 
                     <li class="label">Main</li>
                     <li><a href="dashboard.php" ><i class="ti-home"></i>Dashboard</a></li>
-                   <li><a href="course.php"><i class="ti-files"></i>Course</a>
-                    </li>
-                     <li><a href="subject.php"><i class="ti-files"></i>Subject</a>
-                    </li>
-                    
-
-                 
+                    <li><a href="curriculum.php"><i class="ti-files"></i>Curriculum View</a></li>
+                    <li><a href="course.php"><i class="ti-files"></i>Course</a></li>
+                    <li><a href="subject.php"><i class="ti-files"></i>Subject</a></li>
+                    <li><a href="class.php"><i class="ti-files"></i>Class Management</a></li>
+                     
+                
                     <li class="label">Apps</li>
                     <li><a class="sidebar-sub-toggle"><i class="ti-user"></i>  Teacher  <span class="sidebar-collapse-icon ti-angle-down"></span></a>
                         <ul>

@@ -2,8 +2,8 @@
                         <div class="col-lg-12">
                             <div class="footer">
                             <p>
-  Balian Community College
-  <a href="https://web.facebook.com/bccfreeeducation" target="_blank" rel="noopener noreferrer">(BCC)</a>
+  (school name)
+  <a href="#" target="_blank" rel="noopener noreferrer">(School Link)</a>
 </p>                            </div>
                         </div>
                     </div>

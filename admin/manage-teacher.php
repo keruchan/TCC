@@ -1,18 +1,17 @@
 <?php
 session_start();
-error_reporting(0);
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 include('includes/dbconnection.php');
-if (strlen($_SESSION['tsasaid']==0)) {
-  header('location:logout.php');
+if (strlen($_SESSION['tsasaid'] == 0)) {
+    header('location:logout.php');
 } else {
 ?>
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <title>TSAS : Manage Teacher</title>
-    
-    <!-- Styles -->
     <link href="../assets/css/lib/font-awesome.min.css" rel="stylesheet">
     <link href="../assets/css/lib/themify-icons.css" rel="stylesheet">
     <link href="../assets/css/lib/menubar/sidebar.css" rel="stylesheet">
@@ -20,8 +19,18 @@ if (strlen($_SESSION['tsasaid']==0)) {
     <link href="../assets/css/lib/unix.css" rel="stylesheet">
     <link href="../assets/css/style.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+    <style>
+        .tag-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            background-color: #17a2b8;
+            color: #fff;
+            font-size: 12px;
+            border-radius: 20px;
+            margin: 2px 4px 2px 0;
+        }
+    </style>
 </head>
-
 <body>
     <?php include_once('includes/sidebar.php'); ?>
     <?php include_once('includes/header.php'); ?>
@@ -34,7 +43,6 @@ if (strlen($_SESSION['tsasaid']==0)) {
                         <div class="page-header">
                             <div class="page-title">
                                 <h1>Teacher Management 
-                                    <!-- Add Teacher Button like in reference -->
                                     <a href="add-teacher.php" class="btn btn-warning btn-sm ml-3">+ Add Teacher</a>
                                 </h1>
                             </div>
@@ -52,30 +60,45 @@ if (strlen($_SESSION['tsasaid']==0)) {
                                 <thead>
                                     <tr>
                                         <th>#</th>
-                                        <th>Teacher Name</th>
-                                        <th>Employee ID</th>
-                                        <th>Email</th>
-                                        <th>Mobile Number</th>
+                                        <th>Full Name</th>
+                                        <th>Employment Type</th>
+                                        <th>Skills</th>
                                         <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php
-                                    $sql = "SELECT * FROM tblteacher ORDER BY ID DESC";
+                                    $sql = "SELECT 
+                                                t.TeacherID, t.FirstName, t.LastName, t.EmploymentType,
+                                                GROUP_CONCAT(s.SkillName SEPARATOR ', ') AS Skills
+                                            FROM tblteacher t
+                                            LEFT JOIN tblskills s ON t.TeacherID = s.TeacherID
+                                            GROUP BY t.TeacherID, t.FirstName, t.LastName, t.EmploymentType
+                                            ORDER BY t.TeacherID DESC";
                                     $query = $dbh->prepare($sql);
                                     $query->execute();
                                     $results = $query->fetchAll(PDO::FETCH_OBJ);
                                     $cnt = 1;
-                                    foreach ($results as $row) { ?>
+                                    foreach ($results as $row) {
+                                    ?>
                                         <tr>
                                             <td><?= $cnt++ ?></td>
-                                            <td><?= htmlentities($row->FirstName . ' ' . $row->LastName) ?></td>
-                                            <td><?= htmlentities($row->EmpID) ?></td>
-                                            <td><?= htmlentities($row->Email) ?></td>
-                                            <td><?= htmlentities($row->MobileNumber) ?></td>
+                                            <td><?= htmlentities($row->LastName . ', ' . $row->FirstName) ?></td>
+                                            <td><?= htmlentities($row->EmploymentType) ?></td>
                                             <td>
-                                                <a href="edit-teacher.php?editid=<?= $row->ID ?>"><i class="ti-pencil-alt color-success"></i></a>
-                                                <a href="manage-teacher.php?delid=<?= $row->ID ?>" onclick="return confirm('Do you really want to Delete ?');"><i class="ti-trash color-danger"></i></a>
+                                                <?php
+                                                $skills = explode(',', $row->Skills ?? '');
+                                                foreach ($skills as $skill) {
+                                                    $trimmed = trim($skill);
+                                                    if (!empty($trimmed)) {
+                                                        echo "<span class='tag-badge'>" . htmlentities($trimmed) . "</span>";
+                                                    }
+                                                }
+                                                ?>
+                                            </td>
+                                            <td>
+                                                <a href="teacher-profile.php?viewid=<?= $row->TeacherID ?>"><i class="ti-eye color-primary"></i></a>
+                                                <a href="manage-teacher.php?delid=<?= $row->TeacherID ?>" onclick="return confirm('Do you really want to Delete ?');"><i class="ti-trash color-danger"></i></a>
                                             </td>
                                         </tr>
                                     <?php } ?>
@@ -84,7 +107,6 @@ if (strlen($_SESSION['tsasaid']==0)) {
                         </div>
                     </div>
                 </div>
-                
                 <?php include_once('includes/footer.php'); ?>
             </div>
         </div>
@@ -98,11 +120,10 @@ if (strlen($_SESSION['tsasaid']==0)) {
     <script src="../assets/js/scripts.js"></script>
     <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
     <script>
-        $(document).ready(function() {
+        $(document).ready(function () {
             $('#teacherTable').DataTable();
         });
     </script>
 </body>
-
 </html>
 <?php } ?>

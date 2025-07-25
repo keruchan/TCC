@@ -1,85 +1,46 @@
 <?php
 session_start();
 error_reporting(0);
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 include('includes/dbconnection.php');
 
-if (strlen($_SESSION['tsasaid'] == 0)) {
+if (strlen($_SESSION['tsasaid']) == 0) {
     header('location:logout.php');
-} else {
-    if (isset($_POST['submit'])) {
-        $empid = $_POST['empid'];
-        $fname = $_POST['fname'];
-        $lname = $_POST['lname'];
-        $mobnum = $_POST['mobnum'];
-        $email = $_POST['email'];
-        $gender = $_POST['gender'];
-        $dob = $_POST['dob'];
-        $cid = $_POST['cid'];
-        $religion = $_POST['religion'];
-        $address = $_POST['address'];
-        $bachelors = $_POST['bachelors']; // Educational Background
-        $masters = $_POST['masters']; // Educational Background
-        $doctorate = $_POST['doctorate']; // Educational Background
-        $work_experience = $_POST['work_experience']; // Work Experience
-        
-        $propic = $_FILES["propic"]["name"];
-        $extension = substr($propic, strlen($propic) - 4, strlen($propic));
-        $allowed_extensions = array(".jpg", ".jpeg", ".png", ".gif");
-        
-        if (!in_array($extension, $allowed_extensions)) {
-            echo "<script>alert('Profile Pics has Invalid format. Only jpg / jpeg / png / gif format allowed');</script>";
-        } else {
-            $propic = md5($propic) . time() . $extension;
-            move_uploaded_file($_FILES["propic"]["tmp_name"], "images/" . $propic);
-            $ret = "select Email from tblteacher where Email=:email || MobileNumber=:mobnum || EmpID=:empid";
-            $query = $dbh->prepare($ret);
-            $query->bindParam(':empid', $empid, PDO::PARAM_STR);
-            $query->bindParam(':mobnum', $mobnum, PDO::PARAM_STR);
-            $query->bindParam(':email', $email, PDO::PARAM_STR);
-            $query->execute();
-            $results = $query->fetchAll(PDO::FETCH_OBJ);
-            
-            if ($query->rowCount() == 0) {
-                $sql = "insert into tblteacher(EmpID, FirstName, LastName, MobileNumber, Email, Gender, Dob, CourseID, Religion, Address, ProfilePic, Bachelors, Masters, Doctorate, WorkExperience) values(:empid, :fname, :lname, :mobnum, :email, :gender, :dob, :cid, :religion, :address, :propic, :bachelors, :masters, :doctorate, :work_experience)";
-                $query = $dbh->prepare($sql);
-                $query->bindParam(':empid', $empid, PDO::PARAM_STR);
-                $query->bindParam(':fname', $fname, PDO::PARAM_STR);
-                $query->bindParam(':lname', $lname, PDO::PARAM_STR);
-                $query->bindParam(':mobnum', $mobnum, PDO::PARAM_STR);
-                $query->bindParam(':email', $email, PDO::PARAM_STR);
-                $query->bindParam(':gender', $gender, PDO::PARAM_STR);
-                $query->bindParam(':dob', $dob, PDO::PARAM_STR);
-                $query->bindParam(':cid', $cid, PDO::PARAM_STR);
-                $query->bindParam(':religion', $religion, PDO::PARAM_STR);
-                $query->bindParam(':address', $address, PDO::PARAM_STR);
-                $query->bindParam(':propic', $propic, PDO::PARAM_STR);
-                $query->bindParam(':bachelors', $bachelors, PDO::PARAM_STR);
-                $query->bindParam(':masters', $masters, PDO::PARAM_STR);
-                $query->bindParam(':doctorate', $doctorate, PDO::PARAM_STR);
-                $query->bindParam(':work_experience', $work_experience, PDO::PARAM_STR);
-                $query->execute();
-
-                $LastInsertId = $dbh->lastInsertId();
-                if ($LastInsertId > 0) {
-                    echo '<script>alert("Teacher detail has been added.")</script>';
-                    echo "<script>window.location.href ='add-teacher.php'</script>";
-                } else {
-                    echo '<script>alert("Something Went Wrong. Please try again")</script>';
-                }
-            } else {
-                echo "<script>alert('Email-id, Employee Id, or Mobile Number already exist. Please try again');</script>";
-            }
-        }
-    }
+    exit;
 }
+
+// Use PDO to fetch parttime_schedules
+$schedule = null;
+try {
+    $sql = "SELECT * FROM parttime_schedules LIMIT 1";
+    $query = $dbh->prepare($sql);
+    $query->execute();
+    $schedule = $query->fetch(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $schedule = null;
+}
+
+// Helper for time formatting
+function display_time($time) {
+    return date("h:i A", strtotime($time));
+}
+
+// Get available days from schedule and make an array
+$available_days = [];
+if ($schedule && !empty($schedule['days_of_week'])) {
+    $available_days = array_map('trim', explode(',', $schedule['days_of_week']));
+}
+// Standardize to capitalized day names
+$all_days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+$available_days = array_intersect($all_days, $available_days);
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <title>TSAS : Add Teacher Information</title>
-
     <link href="../assets/css/lib/calendar2/pignose.calendar.min.css" rel="stylesheet">
     <link href="../assets/css/lib/font-awesome.min.css" rel="stylesheet">
     <link href="../assets/css/lib/themify-icons.css" rel="stylesheet">
@@ -88,188 +49,425 @@ if (strlen($_SESSION['tsasaid'] == 0)) {
     <link href="../assets/css/lib/unix.css" rel="stylesheet">
     <link href="../assets/css/style.css" rel="stylesheet">
     <style>
-        .form-group {
-            margin-bottom: 15px;
+        .card-section { margin-bottom: 30px; box-shadow: 0 2px 12px rgba(0,0,0,0.06);}
+        .tag-badge {
+            display: inline-block;
+            background-color: #17a2b8;
+            color: #fff;
+            padding: 5px 10px;
+            margin: 2px;
+            border-radius: 15px;
         }
-        .form-control {
-            border-radius: 5px;
-            padding: 8px;
+        .tag-badge .remove-tag {
+            margin-left: 8px;
+            cursor: pointer;
+            color: #fff;
         }
-        .form-control:focus {
-            box-shadow: none;
+        .teaching-load-group, .skill-proof-group {
+            border: 1px solid #eee;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            position: relative;
+            background: #fcfcfc;
         }
+        .remove-btn-teachingload, .remove-btn-skillproof {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        @media (max-width: 767px) {
+            .remove-btn-teachingload, .remove-btn-skillproof {
+                position: static;
+                margin-top: 10px;
+            }
+        }
+        .schedule-table { width:100%; }
+        .schedule-table th, .schedule-table td { padding:8px 12px; }
+        .schedule-table thead th { background:#f8f9fa; }
+        .schedule-table { border-collapse: collapse; }
+        .schedule-table tr { border-bottom: 1px solid #eee; }
+        .schedule-table .form-check { margin-bottom:0; }
+        .schedule-table label { font-weight:normal; }
     </style>
 </head>
-
 <body>
+<?php include_once('includes/sidebar.php'); ?>
+<?php include_once('includes/header.php'); ?>
 
-    <?php include_once('includes/sidebar.php'); ?>
-    <?php include_once('includes/header.php'); ?>
-
-    <div class="content-wrap">
-        <div class="main">
-            <div class="container-fluid">
-                <div class="row">
-                    <div class="col-lg-8 p-r-0 title-margin-right">
-                        <div class="page-header">
-                            <div class="page-title">
-                                <h1>Add Teacher</h1>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-lg-4 p-l-0 title-margin-left">
-                        <div class="page-header">
-                            <div class="page-title">
-                                <ol class="breadcrumb text-right">
-                                    <li><a href="dashboard.php">Dashboard</a></li>
-                                    <li class="active">Teacher Information</li>
-                                </ol>
-                            </div>
+<div class="content-wrap">
+    <div class="main">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="page-header">
+                        <div class="page-title">
+                            <h1>Add Teacher</h1>
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <div id="main-content">
-                    <div class="card alert">
+            <div id="main-content">
+                <form method="post" action="insert-teacher.php" enctype="multipart/form-data">
+                    <!-- TEACHER INFO CARD -->
+                    <div class="card card-section">
+                        <div class="card-header m-b-20">
+                            <h4>Teacher Information</h4>
+                        </div>
                         <div class="card-body">
-                            <form name="" method="post" action="" enctype="multipart/form-data">
-                                <div class="card-header m-b-20">
-                                    <h4>Teacher Information</h4>
-                                </div>
-
-                                <div class="row">
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>First Name</label>
-                                            <input type="text" class="form-control" name="fname" required="true">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Last Name</label>
-                                            <input type="text" class="form-control" name="lname" required="true">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Mobile Number</label>
-                                            <input type="text" class="form-control" name="mobnum" maxlength="10" pattern="[0-9]+" required="true">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Email</label>
-                                            <input type="email" class="form-control" name="email" required="true">
-                                        </div>
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label>First Name</label>
+                                        <input type="text" class="form-control" name="fname" required>
                                     </div>
                                 </div>
-
-                                <div class="row">
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Gender*</label>
-                                            <select class="form-control" name="gender" required="true">
-                                                <option value="Male">Male</option>
-                                                <option value="Female">Female</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Date of Birth</label>
-                                            <input type="date" class="form-control" name="dob" required="true">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Emp ID</label>
-                                            <input type="text" class="form-control" name="empid" required="true">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Course</label>
-                                            <select class="form-control" name="cid" required="true">
-                                                <option value="">Select Course</option>
-                                                <?php
-                                                $sql = "SELECT * from tblcourse";
-                                                $query = $dbh->prepare($sql);
-                                                $query->execute();
-                                                $results = $query->fetchAll(PDO::FETCH_OBJ);
-                                                foreach ($results as $row) {
-                                                ?>
-                                                    <option value="<?= htmlentities($row->ID) ?>"><?= htmlentities($row->CourseName) ?> (<?= htmlentities($row->BranchName) ?>)</option>
-                                                <?php } ?>
-                                            </select>
-                                        </div>
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label>Last Name</label>
+                                        <input type="text" class="form-control" name="lname" required>
                                     </div>
                                 </div>
-
-                                <!-- Address, Religion -->
-                                <div class="row">
-                                    <div class="col-md-3">
-                                        <div class="form-group">
-                                            <label>Religion</label>
-                                            <input type="text" class="form-control" name="religion" required="true">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-9">
-                                        <div class="form-group">
-                                            <label>Address</label>
-                                            <input type="text" class="form-control" name="address" required="true">
-                                        </div>
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label>Email</label>
+                                        <input type="email" class="form-control" name="email" required>
                                     </div>
                                 </div>
-
-                                <!-- Educational Background -->
-                                <h5>Educational Background</h5>
-                                <div class="row">
-                                    <div class="col-md-4">
-                                        <div class="form-group">
-                                            <label>Bachelor's Degree</label>
-                                            <input type="text" class="form-control" name="bachelors">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="form-group">
-                                            <label>Master's Degree</label>
-                                            <input type="text" class="form-control" name="masters">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="form-group">
-                                            <label>Doctorate</label>
-                                            <input type="text" class="form-control" name="doctorate">
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Work Experience -->
-                                <div class="form-group">
-                                    <label>Work Experience (tag qualifications, positions)</label>
-                                    <textarea name="work_experience" rows="4" class="form-control" placeholder="e.g., Professor at XYZ University, 2015-2020, PhD in CS"></textarea>
-                                </div>
-
-                                <!-- Profile Image -->
-                                <div class="form-group">
-                                    <label>Upload Teacher Photo <span>(150 x 150)</span></label>
-                                    <input type="file" name="propic" accept="image/*" class="form-control">
-                                </div>
-
-                                <button class="btn btn-warning btn-lg" type="submit" name="submit">Save</button>
-                                <button class="btn btn-secondary btn-lg" type="reset">Reset</button>
-                            </form>
+                            </div>
+                            <div class="form-group mt-2">
+                                <label>Upload Teacher Photo <span>(150 x 150)</span></label>
+                                <input type="file" name="propic" accept="image/*" class="form-control" required>
+                            </div>
                         </div>
                     </div>
-                    <?php include_once('includes/footer.php'); ?>
-                </div>
+
+                    <!-- EDUCATIONAL BACKGROUND CARD -->
+                    <div class="card card-section">
+                        <div class="card-header m-b-20">
+                            <h4>Educational Background <small class="text-danger">(Please do not abbreviate degrees)</small></h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <label>Bachelor's Degree</label>
+                                    <input type="text" class="form-control" name="bachelors">
+                                </div>
+                                <div class="col-md-6">
+                                    <label>TOR</label>
+                                    <input type="file" class="form-control" name="bachelors_tor" accept="application/pdf,image/*">
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Master's Degree</label>
+                                    <input type="text" class="form-control" name="masters">
+                                </div>
+                                <div class="col-md-6">
+                                    <label>TOR</label>
+                                    <input type="file" class="form-control" name="masters_tor" accept="application/pdf,image/*">
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Doctorate</label>
+                                    <input type="text" class="form-control" name="doctorate">
+                                </div>
+                                <div class="col-md-6">
+                                    <label>TOR</label>
+                                    <input type="file" class="form-control" name="doctorate_tor" accept="application/pdf,image/*">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TEACHING EXPERIENCE CARD -->
+                    <div class="card card-section">
+                        <div class="card-header m-b-20">
+                            <h4>Teaching Experience</h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group d-flex align-items-center">
+                                <label class="mr-3 mb-0">Do you have teaching experience?</label>
+                                <select name="has_experience" id="has_experience" class="form-control" style="max-width: 150px; display: inline-block;" onchange="document.getElementById('teaching_exp').style.display = this.value === 'Yes' ? 'block' : 'none';">
+                                    <option value="No">No</option>
+                                    <option value="Yes">Yes</option>
+                                </select>
+                            </div>
+                            <div id="teaching_exp" style="display:none">
+                                <div id="teaching-load-fields">
+                                    <div class="teaching-load-group">
+                                        <button type="button" class="btn btn-secondary btn-sm remove-btn-teachingload" style="display:none;" onclick="removeTeachingLoadField(this)">Remove</button>
+                                        <div class="form-group d-flex align-items-center">
+                                            <label class="mr-3 mb-0">Upload Teaching Load</label>
+                                            <input type="file" class="form-control" name="teaching_load[]" accept="application/pdf,image/*" style="max-width: 300px; display: inline-block;">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Subjects Taught</label>
+                                            <input type="text" class="form-control subject-input" placeholder="Type a subject and press Enter">
+                                            <button type="button" class="btn btn-info btn-sm mt-2 add-subject-btn">+ Add Subject</button>
+                                            <div class="subjects-container d-flex flex-wrap"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-info btn-sm mt-2" onclick="addTeachingLoadField()">Upload Another Teaching Load</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SKILLS CATALOG CARD -->
+                    <div class="card card-section">
+                        <div class="card-header m-b-20">
+                            <h4>Skills Catalog</h4>
+                        </div>
+                        <div class="card-body" id="skills_section">
+                            <div id="skills-proof-pairs">
+                                <!-- First skill-proof-group -->
+                                <div class="skill-proof-group">
+                                    <button type="button" class="btn btn-secondary btn-sm remove-btn-skillproof" style="display:none;" onclick="removeSkillProofField(this)">Remove</button>
+                                    <div class="form-group">
+                                        <label>Skills</label>
+                                        <input type="text" class="form-control skill-input" placeholder="Type a skill and press Enter">
+                                        <button type="button" class="btn btn-info btn-sm mt-2 add-skill-btn">+ Add Skill</button>
+                                        <div class="skills-container d-flex flex-wrap"></div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Upload Skill Proof for above skills</label>
+                                        <input type="file" class="form-control" name="skills_proof_file_0[]" multiple accept="application/pdf,image/*">
+                                        <small class="form-text text-muted">Please upload proof(s) for the skill(s) above (e.g., certificates, diplomas, awards, etc.).</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-info btn-sm mt-2" onclick="addSkillProofField()">Add Another Skills & Proof Set</button>
+                        </div>
+                    </div>
+
+                    <!-- PREFERRED TIME CARD -->
+                    <div class="card card-section">
+                        <div class="card-header m-b-20">
+                            <h4>Preferred Teaching Schedule</h4>
+                            <small class="text-muted">Select your preferred class time(s) for each day. Time ranges are based on institutional schedule.</small>
+                        </div>
+                        <div class="card-body">
+                            <?php if ($schedule && count($available_days)) { ?>
+                            <div class="form-group">
+                                <label>Available Days:</label>
+                                <input type="text" class="form-control" value="<?php echo htmlspecialchars(implode(', ', $available_days)); ?>" readonly>
+                            </div>
+                            <div class="form-group">
+                                <label>Choose Preferred Time per Day:</label>
+                                <div class="table-responsive">
+                                <table class="schedule-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Day</th>
+                                            <th>Morning<br><small><?php echo display_time($schedule['morning_start']).' - '.display_time($schedule['morning_end']); ?></small></th>
+                                            <th>Afternoon<br><small><?php echo display_time($schedule['afternoon_start']).' - '.display_time($schedule['afternoon_end']); ?></small></th>
+                                            <th>Night<br><small><?php echo display_time($schedule['night_start']).' - '.display_time($schedule['night_end']); ?></small></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    <?php foreach ($available_days as $day): ?>
+                                    <tr>
+                                        <td><?php echo $day; ?></td>
+                                        <td>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="preferred_time[<?php echo $day; ?>][]" value="morning" id="pref_<?php echo $day; ?>_morning">
+                                                <label class="form-check-label" for="pref_<?php echo $day; ?>_morning">Morning</label>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="preferred_time[<?php echo $day; ?>][]" value="afternoon" id="pref_<?php echo $day; ?>_afternoon">
+                                                <label class="form-check-label" for="pref_<?php echo $day; ?>_afternoon">Afternoon</label>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="preferred_time[<?php echo $day; ?>][]" value="night" id="pref_<?php echo $day; ?>_night">
+                                                <label class="form-check-label" for="pref_<?php echo $day; ?>_night">Night</label>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                                </div>
+                            </div>
+                            <?php } else { ?>
+                            <div class="alert alert-warning">No schedule found. Please contact administrator.</div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                    <!-- END PREFERRED TIME CARD -->
+
+                    <button class="btn btn-warning btn-lg" type="submit" name="submit">Save</button>
+                    <button class="btn btn-secondary btn-lg" type="reset">Reset</button>
+                </form>
+                <?php include_once('includes/footer.php'); ?>
             </div>
         </div>
     </div>
+</div>
 
-    <script src="../assets/js/lib/jquery.min.js"></script>
-    <script src="../assets/js/lib/bootstrap.min.js"></script>
-    <script src="../assets/js/scripts.js"></script>
+<script>
+// Subjects as tags per teaching load field
+function subjectTagElement(subject) {
+    const tag = document.createElement('span');
+    tag.classList.add('tag-badge');
+    tag.innerHTML = `${subject}<span class="remove-tag">&times;</span>`;
+
+    const hiddenInput = document.createElement('input');
+    hiddenInput.type = 'hidden';
+    hiddenInput.name = 'subjects_taught[]';
+    hiddenInput.value = subject;
+    tag.appendChild(hiddenInput);
+
+    tag.querySelector('.remove-tag').addEventListener('click', () => {
+        tag.remove();
+    });
+
+    return tag;
+}
+
+function setupSubjectTagging(teachingLoadGroup) {
+    const input = teachingLoadGroup.querySelector('.subject-input');
+    const btn = teachingLoadGroup.querySelector('.add-subject-btn');
+    const container = teachingLoadGroup.querySelector('.subjects-container');
+
+    btn.addEventListener('click', function () {
+        const subject = input.value.trim();
+        if (subject) {
+            container.appendChild(subjectTagElement(subject));
+            input.value = '';
+        }
+    });
+
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            btn.click();
+        }
+    });
+}
+
+// Initial setup for first teaching-load-group
+document.querySelectorAll('.teaching-load-group').forEach(setupSubjectTagging);
+
+// Add another teaching load functionality
+function addTeachingLoadField() {
+    const container = document.getElementById('teaching-load-fields');
+    const group = document.createElement('div');
+    group.classList.add('teaching-load-group');
+    group.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-sm remove-btn-teachingload" onclick="removeTeachingLoadField(this)">Remove</button>
+        <div class="form-group d-flex align-items-center">
+            <label class="mr-3 mb-0">Upload Teaching Load</label>
+            <input type="file" class="form-control" name="teaching_load[]" accept="application/pdf,image/*" style="max-width: 300px; display: inline-block;">
+        </div>
+        <div class="form-group">
+            <label>Subjects Taught</label>
+            <input type="text" class="form-control subject-input" placeholder="Type a subject and press Enter">
+            <button type="button" class="btn btn-info btn-sm mt-2 add-subject-btn">+ Add Subject</button>
+            <div class="subjects-container d-flex flex-wrap"></div>
+        </div>
+    `;
+    container.appendChild(group);
+    setupSubjectTagging(group);
+}
+
+// Remove teaching load field
+function removeTeachingLoadField(button) {
+    button.parentElement.remove();
+}
+
+// --- Skills Tagging for Skill-Proof-Groups ---
+
+function skillTagElement(skill, index) {
+    const tag = document.createElement('span');
+    tag.classList.add('tag-badge');
+    tag.innerHTML = `${skill}<span class="remove-tag">&times;</span>`;
+
+    const hiddenInput = document.createElement('input');
+    hiddenInput.type = 'hidden';
+    hiddenInput.name = `skill_tag_${index}[]`;
+    hiddenInput.value = skill;
+    tag.appendChild(hiddenInput);
+
+    tag.querySelector('.remove-tag').addEventListener('click', () => {
+        tag.remove();
+    });
+
+    return tag;
+}
+
+function setupSkillTagging(skillProofGroup, index) {
+    const input = skillProofGroup.querySelector('.skill-input');
+    const btn = skillProofGroup.querySelector('.add-skill-btn');
+    const container = skillProofGroup.querySelector('.skills-container');
+
+    btn.addEventListener('click', function () {
+        const skill = input.value.trim();
+        if (skill) {
+            container.appendChild(skillTagElement(skill, index));
+            input.value = '';
+        }
+    });
+
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            btn.click();
+        }
+    });
+}
+
+// Initial setup for first skill-proof-group
+document.querySelectorAll('.skill-proof-group').forEach(function(group, i) {
+    setupSkillTagging(group, i);
+});
+
+// Add another skill+proof set functionality
+function addSkillProofField() {
+    const container = document.getElementById('skills-proof-pairs');
+    const index = container.querySelectorAll('.skill-proof-group').length;
+    const group = document.createElement('div');
+    group.classList.add('skill-proof-group');
+    group.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-sm remove-btn-skillproof" onclick="removeSkillProofField(this)">Remove</button>
+        <div class="form-group">
+            <label>Skills</label>
+            <input type="text" class="form-control skill-input" placeholder="Type a skill and press Enter">
+            <button type="button" class="btn btn-info btn-sm mt-2 add-skill-btn">+ Add Skill</button>
+            <div class="skills-container d-flex flex-wrap"></div>
+        </div>
+        <div class="form-group">
+            <label>Upload Skill Proof for above skills</label>
+            <input type="file" class="form-control" name="skills_proof_file_${index}[]" multiple accept="application/pdf,image/*">
+            <small class="form-text text-muted">Please upload proof(s) for the skill(s) above (e.g., certificates, diplomas, awards, etc.).</small>
+        </div>
+    `;
+    container.appendChild(group);
+    setupSkillTagging(group, index);
+}
+
+// Remove skill proof field
+function removeSkillProofField(button) {
+    button.parentElement.parentElement.remove();
+}
+
+// Hide remove button for first skill proof field and first teaching load group on load
+document.addEventListener("DOMContentLoaded", function(){
+    let firstRemoveBtnSkill = document.querySelector("#skills-proof-pairs .remove-btn-skillproof");
+    if (firstRemoveBtnSkill) {
+        firstRemoveBtnSkill.style.display = "none";
+    }
+    let firstRemoveBtnTeach = document.querySelector("#teaching-load-fields .remove-btn-teachingload");
+    if (firstRemoveBtnTeach) {
+        firstRemoveBtnTeach.style.display = "none";
+    }
+});
+</script>
+
+<script src="../assets/js/lib/jquery.min.js"></script>
+<script src="../assets/js/lib/bootstrap.min.js"></script>
+<script src="../assets/js/scripts.js"></script>
 </body>
-
 </html>

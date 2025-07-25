@@ -10,7 +10,12 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
 // Fetch saved schedules from DB
 $schedules = [
     'Regular' => ['days' => [], 'start_time' => '', 'end_time' => ''],
-    'Part-time' => ['days' => [], 'start_time' => '', 'end_time' => '']
+    'Part-time' => [
+        'days' => [],
+        'morning_start' => '', 'morning_end' => '',
+        'afternoon_start' => '', 'afternoon_end' => '',
+        'night_start' => '', 'night_end' => ''
+    ]
 ];
 
 $sql = "SELECT schedule_type, days_of_week, start_time, end_time FROM schedules";
@@ -20,9 +25,25 @@ $result = $query->fetchAll(PDO::FETCH_ASSOC);
 
 foreach ($result as $row) {
     $type = $row['schedule_type'];
-    $schedules[$type]['days'] = explode(',', $row['days_of_week']);
-    $schedules[$type]['start_time'] = $row['start_time'];
-    $schedules[$type]['end_time'] = $row['end_time'];
+    if ($type === 'Regular') {
+        $schedules[$type]['days'] = explode(',', $row['days_of_week']);
+        $schedules[$type]['start_time'] = $row['start_time'];
+        $schedules[$type]['end_time'] = $row['end_time'];
+    }
+}
+
+$sql = "SELECT * FROM parttime_schedules LIMIT 1";
+$query = $dbh->prepare($sql);
+$query->execute();
+$parttime = $query->fetch(PDO::FETCH_ASSOC);
+if ($parttime) {
+    $schedules['Part-time']['days'] = explode(',', $parttime['days_of_week']);
+    $schedules['Part-time']['morning_start'] = $parttime['morning_start'];
+    $schedules['Part-time']['morning_end'] = $parttime['morning_end'];
+    $schedules['Part-time']['afternoon_start'] = $parttime['afternoon_start'];
+    $schedules['Part-time']['afternoon_end'] = $parttime['afternoon_end'];
+    $schedules['Part-time']['night_start'] = $parttime['night_start'];
+    $schedules['Part-time']['night_end'] = $parttime['night_end'];
 }
 ?>
 <!DOCTYPE html>
@@ -59,14 +80,11 @@ foreach ($result as $row) {
         .time-row {
             display: flex;
             gap: 20px;
-            align-items: center;
+            flex-wrap: wrap;
         }
-        .time-row label {
-            margin-bottom: 0;
-        }
-        .time-row input[type="time"] {
-            max-width: 200px;
-            display: inline-block;
+        .time-slot {
+            flex: 1;
+            min-width: 250px;
         }
     </style>
 </head>
@@ -94,7 +112,6 @@ foreach ($result as $row) {
                                 <input type="hidden" name="schedule_type" value="Regular">
                                 <input type="hidden" name="days" id="regular_days_input">
 
-                                <!-- Select Days (Pills) -->
                                 <div class="form-group">
                                     <label>Select Day(s):</label>
                                     <div class="day-selector" id="regular_day_selector">
@@ -109,17 +126,14 @@ foreach ($result as $row) {
                                     <small class="form-text text-muted">Click to select one or multiple days.</small>
                                 </div>
 
-                                <!-- Start and End Time -->
                                 <div class="form-group time-row">
                                     <div>
                                         <label for="regular_start">Start Time:</label>
-                                        <input type="time" name="start_time" id="regular_start" class="form-control"
-                                               value="<?= htmlspecialchars($schedules['Regular']['start_time']) ?>" required>
+                                        <input type="time" name="start_time" id="regular_start" class="form-control" value="<?= htmlspecialchars($schedules['Regular']['start_time']) ?>" required>
                                     </div>
                                     <div>
                                         <label for="regular_end">End Time:</label>
-                                        <input type="time" name="end_time" id="regular_end" class="form-control"
-                                               value="<?= htmlspecialchars($schedules['Regular']['end_time']) ?>" required>
+                                        <input type="time" name="end_time" id="regular_end" class="form-control" value="<?= htmlspecialchars($schedules['Regular']['end_time']) ?>" required>
                                     </div>
                                 </div>
 
@@ -138,7 +152,6 @@ foreach ($result as $row) {
                                 <input type="hidden" name="schedule_type" value="Part-time">
                                 <input type="hidden" name="days" id="parttime_days_input">
 
-                                <!-- Select Days (Pills) -->
                                 <div class="form-group">
                                     <label>Select Day(s):</label>
                                     <div class="day-selector" id="parttime_day_selector">
@@ -152,17 +165,45 @@ foreach ($result as $row) {
                                     <small class="form-text text-muted">Click to select one or multiple days.</small>
                                 </div>
 
-                                <!-- Start and End Time -->
-                                <div class="form-group time-row">
-                                    <div>
-                                        <label for="parttime_start">Start Time:</label>
-                                        <input type="time" name="start_time" id="parttime_start" class="form-control"
-                                               value="<?= htmlspecialchars($schedules['Part-time']['start_time']) ?>" required>
+                                <div class="form-group">
+                                    <label>Morning Class (AM only):</label>
+                                    <div class="time-row">
+                                        <div class="time-slot">
+                                            <label>Start:</label>
+                                            <input type="time" name="morning_start" class="form-control" max="12:00" value="<?= htmlspecialchars($schedules['Part-time']['morning_start']) ?>">
+                                        </div>
+                                        <div class="time-slot">
+                                            <label>End:</label>
+                                            <input type="time" name="morning_end" class="form-control" max="12:00" value="<?= htmlspecialchars($schedules['Part-time']['morning_end']) ?>">
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label for="parttime_end">End Time:</label>
-                                        <input type="time" name="end_time" id="parttime_end" class="form-control"
-                                               value="<?= htmlspecialchars($schedules['Part-time']['end_time']) ?>" required>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Afternoon Class (12:00 PM - 5:00 PM):</label>
+                                    <div class="time-row">
+                                        <div class="time-slot">
+                                            <label>Start:</label>
+                                            <input type="time" name="afternoon_start" class="form-control" min="12:00" max="17:00" value="<?= htmlspecialchars($schedules['Part-time']['afternoon_start']) ?>">
+                                        </div>
+                                        <div class="time-slot">
+                                            <label>End:</label>
+                                            <input type="time" name="afternoon_end" class="form-control" min="12:00" max="17:00" value="<?= htmlspecialchars($schedules['Part-time']['afternoon_end']) ?>">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Night Class (5:00 PM and later):</label>
+                                    <div class="time-row">
+                                        <div class="time-slot">
+                                            <label>Start:</label>
+                                            <input type="time" name="night_start" class="form-control" min="17:00" value="<?= htmlspecialchars($schedules['Part-time']['night_start']) ?>">
+                                        </div>
+                                        <div class="time-slot">
+                                            <label>End:</label>
+                                            <input type="time" name="night_end" class="form-control" min="17:00" value="<?= htmlspecialchars($schedules['Part-time']['night_end']) ?>">
+                                        </div>
                                     </div>
                                 </div>
 
@@ -185,12 +226,10 @@ foreach ($result as $row) {
 <script src="../assets/js/scripts.js"></script>
 <script>
 $(document).ready(function() {
-    // Toggle day-pill selection
     $('.day-selector').on('click', '.day-pill', function() {
         $(this).toggleClass('selected');
     });
 
-    // Before submitting form, collect selected days
     $('form').submit(function() {
         let selectedDays = [];
         $(this).find('.day-pill.selected').each(function() {

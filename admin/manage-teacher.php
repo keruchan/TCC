@@ -98,7 +98,7 @@ if (strlen($_SESSION['tsasaid'] == 0)) {
                                             </td>
                                             <td>
                                                 <a href="teacher-profile.php?viewid=<?= $row->TeacherID ?>"><i class="ti-eye color-primary"></i></a>
-                                                <a href="manage-teacher.php?delid=<?= $row->TeacherID ?>" onclick="return confirm('Do you really want to Delete ?');"><i class="ti-trash color-danger"></i></a>
+                                                <a href="delete_teacher.php?delid=<?= $row->TeacherID ?>" onclick="return confirm('Do you really want to Delete ?');"><i class="ti-trash color-danger"></i></a>
                                             </td>
                                         </tr>
                                     <?php } ?>

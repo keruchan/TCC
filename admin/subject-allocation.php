@@ -16,46 +16,9 @@ $year_levels = ['1st', '2nd', '3rd', '4th'];
 $selected_year = $_POST['academic_year'] ?? '';
 $selected_sem = $_POST['semester'] ?? '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_sections'])) {
-    if ($selected_year && $selected_sem && isset($_POST['sections']) && is_array($_POST['sections'])) {
-        foreach ($_POST['sections'] as $course_id => $levels) {
-            foreach ($levels as $year_level => $section_count) {
-                if (is_numeric($section_count) && $section_count >= 0) {
-                    $del = $dbh->prepare("DELETE FROM tblclass WHERE course_id = ? AND academic_year = ? AND semester = ? AND year_level = ?");
-                    $del->execute([$course_id, $selected_year, $selected_sem, $year_level]);
-                    if ($section_count > 0) {
-                        $ins = $dbh->prepare("INSERT INTO tblclass (course_id, academic_year, semester, year_level, section, date_created) VALUES (?, ?, ?, ?, ?, NOW())");
-                        $ins->execute([$course_id, $selected_year, $selected_sem, $year_level, $section_count]);
-                    }
-                }
-            }
-        }
-        $msg = "Sections saved!";
-    } else {
-        $msg = "Fill all values, select year and semester.";
-    }
-}
-
-$courses = [];
-$stmt = $dbh->prepare("SELECT ID, CourseName FROM tblcourse ORDER BY CourseName");
-$stmt->execute();
-$courses = $stmt->fetchAll(PDO::FETCH_OBJ);
-
-$existing = [];
-if ($selected_year && $selected_sem) {
-    $se = $dbh->prepare("SELECT course_id, year_level, section FROM tblclass WHERE academic_year=? AND semester=?");
-    $se->execute([$selected_year, $selected_sem]);
-    foreach ($se->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $existing[$row['course_id']][$row['year_level']] = $row['section'];
-    }
-}
-
 // --- STAT CARDS LOGIC ---
-
-// Number of courses/programs
 $num_courses = $dbh->query("SELECT COUNT(*) FROM tblcourse")->fetchColumn();
 
-// Number of subjects (in curriculum for that year and sem)
 $num_subjects = 0;
 if ($selected_sem) {
     $sql = "SELECT COUNT(DISTINCT subject_id) FROM tblcurriculum WHERE semester = :sem";
@@ -65,7 +28,6 @@ if ($selected_sem) {
     $num_subjects = $stmt->fetchColumn();
 }
 
-// Number of sections (tblclass) for this year/semester
 $num_sections = 0;
 if ($selected_year && $selected_sem) {
     $sql = "SELECT COUNT(*) FROM tblclass WHERE academic_year = :ay AND semester = :sem";
@@ -76,32 +38,104 @@ if ($selected_year && $selected_sem) {
     $num_sections = $stmt->fetchColumn();
 }
 
-// Number of candidate instructors (at least 1 verified skill in tblskills)
 $num_candidate_instructors = $dbh->query("SELECT COUNT(DISTINCT t.TeacherID)
             FROM tblteacher t
             JOIN tblskills s ON t.TeacherID = s.TeacherID
             WHERE s.Verified != 0")->fetchColumn();
 
-// --- QUALIFIED INSTRUCTORS PER COURSE ---
-// Will show in the table
-$qualified_per_course = [];
-$sql = "SELECT tc.ID as course_id, COUNT(DISTINCT t.TeacherID) as num_teachers
-        FROM tblteacher t
-        JOIN tblskills s ON t.TeacherID = s.TeacherID
-        JOIN tblteacher AS tc_link ON tc_link.TeacherID = t.TeacherID
-        JOIN tblcourse tc ON FIND_IN_SET(tc.ID, tc_link.CoursesLoad) > 0
-        WHERE s.Verified != 0
-        GROUP BY tc.ID";
-$stmt = $dbh->prepare($sql);
-$stmt->execute();
-foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $qualified_per_course[$row['course_id']] = $row['num_teachers'];
+// --- SUBJECT OVERVIEW LOGIC ---
+$subject_overview = [];
+if ($selected_year && $selected_sem) {
+    $sql = "SELECT 
+                c.CourseName, 
+                s.subject_name AS SubjectName, 
+                s.units AS Units, 
+                cur.year_level, 
+                cl.section,
+                s.ID AS subject_id,
+                cl.id AS section_id
+            FROM tblcurriculum cur
+            JOIN tblcourse c ON cur.course_id = c.ID
+            JOIN tblsubject s ON cur.subject_id = s.ID
+            LEFT JOIN tblclass cl 
+                ON cl.course_id = c.ID
+                AND cl.academic_year = :ay
+                AND cl.semester = :sem
+                AND cl.year_level = cur.year_level
+            WHERE cur.semester = :sem
+            ORDER BY c.CourseName, cur.year_level, s.subject_name";
+    $stmt = $dbh->prepare($sql);
+    $stmt->execute([
+        ':ay' => $selected_year,
+        ':sem' => $selected_sem
+    ]);
+    $subject_overview = $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Get subject fulfillment status (number of instructors assigned per subject-section)
+$subject_fulfillment = [];
+$subject_instructor_names = [];
+if ($selected_year && $selected_sem && !empty($subject_overview)) {
+    foreach ($subject_overview as $row) {
+        $subject_id = $row['subject_id'];
+        $section_count = intval($row['section'] ?? 0);
+        $section_id = $row['section_id'];
+        $fulfilled_instructors = 0;
+        $instructor_names = [];
+        // Fetch all sections for this course/year/semester/level
+        if ($section_count > 0) {
+            // For each section, check if there are allocations with instructors
+            for ($sec = 1; $sec <= $section_count; $sec++) {
+                // Try to find class id for this section number
+                $class_stmt = $dbh->prepare("SELECT id FROM tblclass 
+                    WHERE course_id = (SELECT cur.course_id FROM tblcurriculum cur WHERE cur.subject_id = ? LIMIT 1)
+                        AND academic_year = ?
+                        AND semester = ?
+                        AND year_level = ?
+                        AND section = ?");
+                $class_stmt->execute([
+                    $subject_id, $selected_year, $selected_sem, $row['year_level'], $sec
+                ]);
+                $class_result = $class_stmt->fetch(PDO::FETCH_ASSOC);
+                $class_id = $class_result ? $class_result['id'] : null;
+                if ($class_id) {
+                    // Count number of allocated instructors for this subject-section
+                    $sql = "SELECT sa.teacher_id, t.FirstName, t.LastName 
+                            FROM subject_allocations sa 
+                            LEFT JOIN tblteacher t ON t.TeacherID = sa.teacher_id
+                            WHERE sa.subject_id = :subject_id 
+                                AND sa.section_id = :section_id
+                                AND sa.allocation_status = 'allocated'";
+                    $stmt2 = $dbh->prepare($sql);
+                    $stmt2->execute([
+                        ':subject_id' => $subject_id,
+                        ':section_id' => $class_id
+                    ]);
+                    $teachers = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($teachers as $teacher) {
+                        $fullname = trim($teacher['FirstName'] . " " . $teacher['LastName']);
+                        if ($fullname) {
+                            $instructor_names[] = $fullname;
+                        }
+                        $fulfilled_instructors++;
+                    }
+                }
+            }
+        }
+        // Remove duplicate instructor names
+        $instructor_names = array_unique($instructor_names);
+        $subject_fulfillment[$subject_id . '-' . $row['year_level']] = [
+            'num' => $fulfilled_instructors,
+            'total' => $section_count,
+        ];
+        $subject_instructor_names[$subject_id . '-' . $row['year_level']] = $instructor_names;
+    }
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>TSAS : Class Section Count</title>
+    <title>TSAS : Subject Allocation</title>
     <link href="../assets/css/lib/font-awesome.min.css" rel="stylesheet">
     <link href="../assets/css/lib/themify-icons.css" rel="stylesheet">
     <link href="../assets/css/lib/menubar/sidebar.css" rel="stylesheet">
@@ -137,28 +171,72 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             color: #666;
             font-weight: 500;
         }
-
-        .section-table-header th,
-        .section-table-header td {
-            text-align: center;
-            background: #f8f9fa;
+        .prioritization-block {
+            margin-bottom: 24px;
+        }
+        .prioritization-block label {
             font-weight: 600;
         }
-        .section-table th,
-        .section-table td {
-            text-align: center;
-            vertical-align: middle;
-        }
-        .align-section-table {
-            width: 100%;
-            margin-bottom: 35px;
-        }
-        .course-title-row th {
+        .prioritization-guide {
+            color: #555;
             background: #ffeeba;
+            border-radius: 5px;
+            margin-bottom: 14px;
+            padding: 10px 20px 10px 20px;
+            font-size: 1.05rem;
+        }
+        .prioritization-title {
             font-size: 1.13rem;
-            text-align: left;
-            padding-left: 24px;
-            letter-spacing: .02em;
+            font-weight: 700;
+            color: #0066aa;
+            margin-bottom: 3px;
+        }
+        .dd-priorities {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            max-width: 430px;
+        }
+        .dd-priorities li {
+            margin-bottom: 12px;
+            background: #f7f7fa;
+            padding: 15px 18px;
+            border-radius: 6px;
+            font-size: 1.07rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            cursor: move;
+            border: 1px solid #e2e2e2;
+        }
+        .dd-priorities li .dd-grip {
+            margin-right: 12px;
+            font-size: 1.4em;
+            color: #888;
+            cursor: grab;
+        }
+        .dd-priorities li.dragging {
+            opacity: 0.5;
+            background: #e9ecef;
+        }
+        .fulfilled-yes {
+            color: #2da85d;
+            font-weight: 700;
+        }
+        .fulfilled-no {
+            color: #c9302c;
+            font-weight: 700;
+        }
+        .instructor-list {
+            font-size: 0.98em;
+            color: #444;
+        }
+        .generate-btn {
+            margin-top: 18px;
+            font-size: 1.1rem;
+            padding-left: 32px;
+            padding-right: 32px;
         }
         @media (max-width: 991px) {
             .stat-cards-flex {
@@ -170,13 +248,6 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 min-width: 160px;
                 padding: 20px 6px 13px 6px;
                 margin-bottom: 0;
-            }
-            .align-section-table td, .align-section-table th {
-                font-size: 0.98rem;
-                padding: 8px !important;
-            }
-            .course-title-row th {
-                padding-left: 10px;
             }
         }
     </style>
@@ -192,7 +263,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
 
                     <div class="page-header">
                         <div class="page-title">
-                            <h1>Class Sections per Year Level and Course</h1>
+                            <h1>Subject Allocation (Auto Generation Setup)</h1>
                         </div>
                     </div>
 
@@ -239,56 +310,91 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                     </div>
 
                     <?php if ($selected_year && $selected_sem): ?>
-                    <form method="post">
-                        <input type="hidden" name="academic_year" value="<?= htmlentities($selected_year) ?>">
-                        <input type="hidden" name="semester" value="<?= htmlentities($selected_sem) ?>">
-                        <div class="card alert">
-                            <div class="card-header">
-                                <h4>Number of Sections Per Year Level and Course</h4>
+                        <!-- Prioritization Section with Drag-and-Drop -->
+                        <div class="card alert prioritization-block">
+                            <div class="prioritization-title">Prioritization Settings</div>
+                            <div class="prioritization-guide">
+                                <b>Guide:</b> Set your prioritization for auto-assigning instructors to subjects.<br>
+                                <b>Default/Suggested priority:</b> <span style="color:#007bff;">Matched Skills</span>, <span style="color:#007bff;">Educational Background</span>, <span style="color:#007bff;">Teaching Experience</span> (from highest to lowest).
+                                <br>Drag to reorder. Top is the highest priority. No duplicates are possible.
                             </div>
-                            <div class="card-body">
-                                <div class="table-responsive">
-                                <table class="table table-bordered align-section-table">
-                                    <thead>
-                                        <tr>
-                                            <th style="width:25%;">Course / Program</th>
-                                            <?php foreach ($year_levels as $yl_val): ?>
-                                                <th><?= $yl_val ?></th>
-                                            <?php endforeach; ?>
-                                            <th style="width:14%;">Qualified Instructors</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                    <?php foreach ($courses as $course): ?>
-                                        <tr class="course-title-row">
-                                            <th><?= htmlentities($course->CourseName) ?></th>
-                                            <?php foreach ($year_levels as $yl_val): ?>
-                                                <td>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        name="sections[<?= $course->ID ?>][<?= $yl_val ?>]"
-                                                        class="form-control text-center"
-                                                        style="max-width: 80px; margin: 0 auto;"
-                                                        value="<?= isset($existing[$course->ID][$yl_val]) ? intval($existing[$course->ID][$yl_val]) : 0 ?>"
-                                                        required
-                                                    >
-                                                </td>
-                                            <?php endforeach; ?>
-                                            <td>
-                                                <?= isset($qualified_per_course[$course->ID]) ? $qualified_per_course[$course->ID] : 0 ?>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                                </div>
-                                <div class="text-right">
-                                    <button type="submit" name="save_sections" class="btn btn-success px-5">Save</button>
-                                </div>
+                            <div>
+                                <form id="prioritization-form" method="post" class="mt-2">
+                                    <input type="hidden" name="academic_year" value="<?= htmlentities($selected_year) ?>">
+                                    <input type="hidden" name="semester" value="<?= htmlentities($selected_sem) ?>">
+                                    <ol class="dd-priorities" id="priority-list">
+                                        <li draggable="true" data-value="skills"><span class="dd-grip">&#9776;</span>Matched Skills</li>
+                                        <li draggable="true" data-value="educ"><span class="dd-grip">&#9776;</span>Educational Background</li>
+                                        <li draggable="true" data-value="exp"><span class="dd-grip">&#9776;</span>Teaching Experience (same subject)</li>
+                                    </ol>
+                                    <input type="hidden" name="priorities" id="priorities" value="skills,educ,exp">
+                                    <div class="mt-3">
+                                        <button type="submit" name="generate_allocation" class="btn btn-success generate-btn">
+                                            <i class="fa fa-magic mr-1"></i> Generate Allocation
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
                         </div>
-                    </form>
+
+                        <!-- Subjects Overview Table -->
+                        <div class="card alert mb-4">
+                            <h5>Subjects Overview (for Preparation)</h5>
+                            <div class="table-responsive">
+                                <table class="table table-striped table-bordered">
+                                    <thead>
+                                    <tr>
+                                        <th>Course/Program</th>
+                                        <th>Subject</th>
+                                        <th>Units</th>
+                                        <th>Year Level</th>
+                                        <th>No. of Sections</th>
+                                        <th style="min-width:155px;">Fulfilled (Instructor(s) Assigned)</th>
+                                        <th>Instructor(s)</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    <?php if (count($subject_overview) > 0): ?>
+                                        <?php foreach($subject_overview as $row): ?>
+                                            <?php
+                                            $key = $row['subject_id'] . '-' . $row['year_level'];
+                                            $fulfilled = $subject_fulfillment[$key]['num'] ?? 0;
+                                            $total = $subject_fulfillment[$key]['total'] ?? 0;
+                                            $instructors = $subject_instructor_names[$key] ?? [];
+                                            ?>
+                                            <tr>
+                                                <td><?= htmlentities($row['CourseName']) ?></td>
+                                                <td><?= htmlentities($row['SubjectName']) ?></td>
+                                                <td><?= htmlentities($row['Units']) ?></td>
+                                                <td><?= htmlentities($row['year_level']) ?></td>
+                                                <td><?= htmlentities($row['section'] ?? 0) ?></td>
+                                                <td class="<?= ($fulfilled >= $total && $total > 0) ? 'fulfilled-yes' : 'fulfilled-no' ?>">
+                                                    <?php
+                                                    if ($total > 0) {
+                                                        echo "{$fulfilled}/{$total} section" . ($total > 1 ? "s" : "");
+                                                    } else {
+                                                        echo "0/0";
+                                                    }
+                                                    ?>
+                                                </td>
+                                                <td class="instructor-list">
+                                                    <?php
+                                                    if (!empty($instructors)) {
+                                                        echo implode('<br>', array_map('htmlentities', $instructors));
+                                                    } else {
+                                                        echo "<span style='color:#888'>-</span>";
+                                                    }
+                                                    ?>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <tr><td colspan="7">No subjects found for the selected year and semester.</td></tr>
+                                    <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     <?php endif; ?>
 
                     <?php include_once('includes/footer.php'); ?>
@@ -303,5 +409,59 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
 <script src="../assets/js/lib/preloader/pace.min.js"></script>
 <script src="../assets/js/lib/bootstrap.min.js"></script>
 <script src="../assets/js/scripts.js"></script>
+<script>
+// Drag and drop prioritization logic (no duplicate priorities allowed)
+document.addEventListener('DOMContentLoaded', function() {
+    const list = document.getElementById('priority-list');
+    let draggedItem = null;
+
+    list.addEventListener('dragstart', function(e) {
+        if (e.target.tagName === 'LI') {
+            draggedItem = e.target;
+            setTimeout(() => {
+                e.target.classList.add('dragging');
+            }, 0);
+        }
+    });
+    list.addEventListener('dragend', function(e) {
+        if (e.target.tagName === 'LI') {
+            e.target.classList.remove('dragging');
+        }
+    });
+    list.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        const afterElement = getDragAfterElement(list, e.clientY);
+        if (afterElement == null) {
+            list.appendChild(draggedItem);
+        } else {
+            list.insertBefore(draggedItem, afterElement);
+        }
+    });
+
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('li:not(.dragging)')];
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // Update hidden input on order change
+    list.addEventListener('drop', updatePriorities);
+    list.addEventListener('dragend', updatePriorities);
+    function updatePriorities() {
+        const values = [];
+        list.querySelectorAll('li').forEach(li => {
+            values.push(li.getAttribute('data-value'));
+        });
+        document.getElementById('priorities').value = values.join(',');
+    }
+});
+</script>
 </body>
 </html>

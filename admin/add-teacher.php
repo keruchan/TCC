@@ -13,11 +13,15 @@ if (strlen($_SESSION['tsasaid']) == 0) {
 
 // Use PDO to fetch parttime_schedules
 $schedule = null;
+$default_units = 18; // fallback default
 try {
     $sql = "SELECT * FROM parttime_schedules LIMIT 1";
     $query = $dbh->prepare($sql);
     $query->execute();
     $schedule = $query->fetch(PDO::FETCH_ASSOC);
+    if ($schedule && isset($schedule['default_units']) && is_numeric($schedule['default_units'])) {
+        $default_units = intval($schedule['default_units']);
+    }
 } catch (Exception $e) {
     $schedule = null;
 }
@@ -32,11 +36,20 @@ $available_days = [];
 if ($schedule && !empty($schedule['days_of_week'])) {
     $available_days = array_map('trim', explode(',', $schedule['days_of_week']));
 }
-// Standardize to capitalized day names
 $all_days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 $available_days = array_intersect($all_days, $available_days);
-?>
 
+// --- Fetch Courses from tblcourse ---
+$courses = [];
+try {
+    $sql = "SELECT ID, CourseName FROM tblcourse ORDER BY CourseName ASC";
+    $query = $dbh->prepare($sql);
+    $query->execute();
+    $courses = $query->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $courses = [];
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -117,6 +130,7 @@ $available_days = array_intersect($all_days, $available_days);
                         </div>
                         <div class="card-body">
                             <div class="row">
+                                <!-- First row: Firstname, Lastname, Email -->
                                 <div class="col-md-4">
                                     <div class="form-group">
                                         <label>First Name</label>
@@ -136,9 +150,44 @@ $available_days = array_intersect($all_days, $available_days);
                                     </div>
                                 </div>
                             </div>
-                            <div class="form-group mt-2">
-                                <label>Upload Teacher Photo <span>(150 x 150)</span></label>
-                                <input type="file" name="propic" accept="image/*" class="form-control" required>
+                            <div class="row">
+                                <!-- Second row: Username, Password, Photo -->
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label>Username</label>
+                                        <input type="text" class="form-control" name="username" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label>Password</label>
+                                        <input type="password" class="form-control" name="password" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-group mt-2">
+                                        <label>Upload Teacher Photo <span>(150 x 150)</span></label>
+                                        <input type="file" name="propic" accept="image/*" class="form-control" required>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MAX LOAD CARD -->
+                    <div class="card card-section">
+                        <div class="card-header m-b-20">
+                            <h4>Maximum Number of Load (Units)</h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <label>Preferred Maximum Load (units)</label>
+                                    <input type="number" class="form-control" name="max_load" min="1" max="40" value="<?= $default_units ?>" required>
+                                    <small class="form-text text-muted">
+                                        Specify the maximum number of units this instructor prefers for loading. Default is <?= $default_units ?> (per institutional schedule). Can be lower or higher based on admin discretion.
+                                    </small>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -219,7 +268,6 @@ $available_days = array_intersect($all_days, $available_days);
                         </div>
                         <div class="card-body" id="skills_section">
                             <div id="skills-proof-pairs">
-                                <!-- First skill-proof-group -->
                                 <div class="skill-proof-group">
                                     <button type="button" class="btn btn-secondary btn-sm remove-btn-skillproof" style="display:none;" onclick="removeSkillProofField(this)">Remove</button>
                                     <div class="form-group">
@@ -236,6 +284,30 @@ $available_days = array_intersect($all_days, $available_days);
                                 </div>
                             </div>
                             <button type="button" class="btn btn-info btn-sm mt-2" onclick="addSkillProofField()">Add Another Skills & Proof Set</button>
+                        </div>
+                    </div>
+
+                    <!-- COURSES/CAN BE LOADED TO CARD -->
+                    <div class="card card-section">
+                        <div class="card-header m-b-20">
+                            <h4>Courses/Programs the Teacher Can Be Loaded To</h4>
+                            <small class="text-muted">Select the courses/programs this teacher can be assigned to. All are checked by default.</small>
+                        </div>
+                        <div class="card-body">
+                            <?php if(count($courses)): ?>
+                            <div class="form-group">
+                                <?php foreach($courses as $course): ?>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" name="courses_load[]" id="course_<?php echo $course['ID']; ?>" value="<?php echo $course['ID']; ?>" checked>
+                                    <label class="form-check-label" for="course_<?php echo $course['ID']; ?>">
+                                        <?php echo htmlspecialchars($course['CourseName']); ?>
+                                    </label>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php else: ?>
+                            <div class="alert alert-warning">No courses/programs found. Please contact administrator.</div>
+                            <?php endif; ?>
                         </div>
                     </div>
 

@@ -14,12 +14,21 @@ if (strlen($_SESSION['tsasaid']) == 0) {
         $fname = $_POST['fname'];
         $lname = $_POST['lname'];
         $email = $_POST['email'];
+        $username = $_POST['username'];
+        $password = $_POST['password'];
         $bachelors = $_POST['bachelors'];
         $masters = $_POST['masters'];
         $doctorate = $_POST['doctorate'];
         $has_experience = $_POST['has_experience'];
+        $max_load = isset($_POST['max_load']) ? intval($_POST['max_load']) : null;
 
         $preferred_time = isset($_POST['preferred_time']) ? $_POST['preferred_time'] : [];
+
+        // New: Handle courses/programs load (comma separated)
+        $courses_load = '';
+        if (isset($_POST['courses_load']) && is_array($_POST['courses_load'])) {
+            $courses_load = implode(",", $_POST['courses_load']);
+        }
 
         $propic = $_FILES['propic']['name'];
         $bachelors_tor = $_FILES['bachelors_tor']['name'];
@@ -49,21 +58,29 @@ if (strlen($_SESSION['tsasaid']) == 0) {
                 }
             }
 
-            $ret = "SELECT Email FROM tblteacher WHERE Email = :email";
+            // Check for duplicate username or email
+            $ret = "SELECT 1 FROM tblteacher WHERE Email = :email OR UserName = :username";
             $query = $dbh->prepare($ret);
             $query->bindParam(':email', $email, PDO::PARAM_STR);
+            $query->bindParam(':username', $username, PDO::PARAM_STR);
             $query->execute();
 
             if ($query->rowCount() == 0) {
                 $dbh->beginTransaction();
 
                 try {
-                    $sql = "INSERT INTO tblteacher(FirstName, LastName, Email, ProfilePic, Bachelors, Masters, Doctorate, BachelorsTOR, MastersTOR, DoctorateTOR, HasExperience) 
-                            VALUES(:fname, :lname, :email, :propic, :bachelors, :masters, :doctorate, :bachelors_tor, :masters_tor, :doctorate_tor, :has_experience)";
+                    // Hash password
+                    $password_hashed = password_hash($password, PASSWORD_DEFAULT);
+
+                    // Add UserName, Password columns and max_load
+                    $sql = "INSERT INTO tblteacher(FirstName, LastName, UserName, Email, Password, ProfilePic, Bachelors, Masters, Doctorate, BachelorsTOR, MastersTOR, DoctorateTOR, HasExperience, CoursesLoad, MaxLoad)
+                            VALUES(:fname, :lname, :username, :email, :password, :propic, :bachelors, :masters, :doctorate, :bachelors_tor, :masters_tor, :doctorate_tor, :has_experience, :courses_load, :max_load)";
                     $query = $dbh->prepare($sql);
                     $query->bindParam(':fname', $fname, PDO::PARAM_STR);
                     $query->bindParam(':lname', $lname, PDO::PARAM_STR);
+                    $query->bindParam(':username', $username, PDO::PARAM_STR);
                     $query->bindParam(':email', $email, PDO::PARAM_STR);
+                    $query->bindParam(':password', $password_hashed, PDO::PARAM_STR);
                     $query->bindParam(':propic', $propic_new, PDO::PARAM_STR);
                     $query->bindParam(':bachelors', $bachelors, PDO::PARAM_STR);
                     $query->bindParam(':masters', $masters, PDO::PARAM_STR);
@@ -72,6 +89,8 @@ if (strlen($_SESSION['tsasaid']) == 0) {
                     $query->bindParam(':masters_tor', $masters_tor, PDO::PARAM_STR);
                     $query->bindParam(':doctorate_tor', $doctorate_tor, PDO::PARAM_STR);
                     $query->bindParam(':has_experience', $has_experience, PDO::PARAM_STR);
+                    $query->bindParam(':courses_load', $courses_load, PDO::PARAM_STR);
+                    $query->bindParam(':max_load', $max_load, PDO::PARAM_INT);
                     $query->execute();
 
                     $teacher_id = $dbh->lastInsertId();
@@ -92,7 +111,7 @@ if (strlen($_SESSION['tsasaid']) == 0) {
 
                     if ($has_experience == "Yes" && $teacher_id) {
                         $subjects_taught = isset($_POST['subjects_taught']) ? $_POST['subjects_taught'] : [];
-                        $chunked_subjects = array_chunk($subjects_taught, ceil(count($subjects_taught)/count($teaching_load_uploaded)));
+                        $chunked_subjects = array_chunk($subjects_taught, ceil(count($subjects_taught)/max(1,count($teaching_load_uploaded))));
 
                         foreach ($teaching_load_uploaded as $idx => $load_file) {
                             $subjects = isset($chunked_subjects[$idx]) ? $chunked_subjects[$idx] : [];
@@ -146,7 +165,7 @@ if (strlen($_SESSION['tsasaid']) == 0) {
                     echo "<script>window.location.href ='add-teacher.php'</script>";
                 }
             } else {
-                echo "<script>alert('Email already exists.');</script>";
+                echo "<script>alert('Email or Username already exists.');</script>";
                 echo "<script>window.location.href ='add-teacher.php'</script>";
             }
         }

@@ -9,16 +9,16 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
 }
 
 if (isset($_POST['submit'])) {
-    $subject_name = trim($_POST['subject_name']);
-    $subject_code = trim($_POST['subject_code']);
-    $units = intval($_POST['units']);
-    $description = trim($_POST['description']);
-    $tags = $_POST['tags'] ?? [];
-    $tsasaid = $_SESSION['tsasaid'];
+    $subject_name    = trim($_POST['subject_name']);
+    $subject_code    = trim($_POST['subject_code']);
+    $units           = intval($_POST['units']);
+    $description     = trim($_POST['description']);
+    $tags            = $_POST['tags'] ?? [];
+    $tsasaid         = $_SESSION['tsasaid'];
 
     // Combine time durations
-    $num_meetings = intval($_POST['num_meetings']);
-    $time_durations = [];
+    $num_meetings    = intval($_POST['num_meetings']);
+    $time_durations  = [];
     for ($i = 1; $i <= $num_meetings; $i++) {
         $duration = intval($_POST['time_duration_' . $i] ?? 0);
         if ($duration > 0) {
@@ -26,6 +26,9 @@ if (isset($_POST['submit'])) {
         }
     }
     $combined_duration = implode(',', $time_durations);
+
+    // Capture preferred teachers
+    $preferred_teachers = $_POST['preferred_teachers'] ?? [];
 
     try {
         // Insert into tblsubject with time_duration
@@ -48,6 +51,17 @@ if (isset($_POST['submit'])) {
             $qstmt->bindParam(':subject_id', $subject_id, PDO::PARAM_INT);
             $qstmt->bindParam(':tags', $tagString, PDO::PARAM_STR);
             $qstmt->execute();
+        }
+
+        // Insert preferred teachers into subject_teachers table
+        if ($subject_id > 0 && !empty($preferred_teachers)) {
+            foreach ($preferred_teachers as $teacher_id) {
+                $teacher_sql = "INSERT INTO subject_teachers(subject_id, teacher_id) VALUES(:subject_id, :teacher_id)";
+                $teacher_stmt = $dbh->prepare($teacher_sql);
+                $teacher_stmt->bindParam(':subject_id', $subject_id, PDO::PARAM_INT);
+                $teacher_stmt->bindParam(':teacher_id', $teacher_id, PDO::PARAM_INT);
+                $teacher_stmt->execute();
+            }
         }
 
         $_SESSION['msg'] = "Subject successfully added.";

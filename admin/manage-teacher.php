@@ -29,6 +29,10 @@ if (strlen($_SESSION['tsasaid'] == 0)) {
             border-radius: 20px;
             margin: 2px 4px 2px 0;
         }
+        .verified-percentage {
+            font-weight: bold;
+            color: #007bff;
+        }
     </style>
 </head>
 <body>
@@ -63,23 +67,79 @@ if (strlen($_SESSION['tsasaid'] == 0)) {
                                         <th>Full Name</th>
                                         <th>Employment Type</th>
                                         <th>Skills</th>
+                                        <th>Verified %</th>
                                         <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php
+                                    // Fetch all teachers first
                                     $sql = "SELECT 
                                                 t.TeacherID, t.FirstName, t.LastName, t.EmploymentType,
-                                                GROUP_CONCAT(s.SkillName SEPARATOR ', ') AS Skills
+                                                t.Bachelors, t.BachelorsVerified, t.Masters, t.MastersVerified,
+                                                t.Doctorate, t.DoctorateVerified,
+                                                t.ProfilePic, t.Email
                                             FROM tblteacher t
-                                            LEFT JOIN tblskills s ON t.TeacherID = s.TeacherID
-                                            GROUP BY t.TeacherID, t.FirstName, t.LastName, t.EmploymentType
                                             ORDER BY t.TeacherID DESC";
                                     $query = $dbh->prepare($sql);
                                     $query->execute();
-                                    $results = $query->fetchAll(PDO::FETCH_OBJ);
+                                    $teachers = $query->fetchAll(PDO::FETCH_OBJ);
                                     $cnt = 1;
-                                    foreach ($results as $row) {
+                                    
+                                    foreach ($teachers as $row) {
+                                        // Get skills for this teacher
+                                        $skillsSql = "SELECT SkillName, Verified FROM tblskills WHERE TeacherID = :tid";
+                                        $skillsQuery = $dbh->prepare($skillsSql);
+                                        $skillsQuery->bindParam(':tid', $row->TeacherID, PDO::PARAM_INT);
+                                        $skillsQuery->execute();
+                                        $skills = $skillsQuery->fetchAll(PDO::FETCH_OBJ);
+
+                                        // Get teaching loads for this teacher
+                                        $loadsSql = "SELECT Verified FROM tblteachingload WHERE TeacherID = :tid";
+                                        $loadsQuery = $dbh->prepare($loadsSql);
+                                        $loadsQuery->bindParam(':tid', $row->TeacherID, PDO::PARAM_INT);
+                                        $loadsQuery->execute();
+                                        $loads = $loadsQuery->fetchAll(PDO::FETCH_OBJ);
+
+                                        // Verification percentage calculation (same as in teacher-profile.php)
+                                        $totalToVerify = 0;
+                                        $totalVerified = 0;
+
+                                        // Bachelor's degree
+                                        if (!empty($row->Bachelors)) {
+                                            $totalToVerify++;
+                                            if ($row->BachelorsVerified) $totalVerified++;
+                                        }
+                                        // Master's degree if present
+                                        if (!empty($row->Masters)) {
+                                            $totalToVerify++;
+                                            if ($row->MastersVerified) $totalVerified++;
+                                        }
+                                        // Doctorate if present
+                                        if (!empty($row->Doctorate)) {
+                                            $totalToVerify++;
+                                            if ($row->DoctorateVerified) $totalVerified++;
+                                        }
+                                        // Teaching load verifications
+                                        foreach ($loads as $load) {
+                                            $totalToVerify++;
+                                            if ($load->Verified) $totalVerified++;
+                                        }
+                                        // Skills verifications (each skill row is one slot)
+                                        foreach ($skills as $skill) {
+                                            $totalToVerify++;
+                                            if ($skill->Verified) $totalVerified++;
+                                        }
+                                        $verifiedPercent = $totalToVerify > 0 ? round(($totalVerified / $totalToVerify) * 100) : 0;
+
+                                        // Prepare skills for display
+                                        $skillTags = [];
+                                        foreach ($skills as $skillObj) {
+                                            $skillNames = array_map('trim', explode(',', $skillObj->SkillName));
+                                            foreach ($skillNames as $sk) {
+                                                if (!empty($sk)) $skillTags[] = $sk;
+                                            }
+                                        }
                                     ?>
                                         <tr>
                                             <td><?= $cnt++ ?></td>
@@ -87,15 +147,12 @@ if (strlen($_SESSION['tsasaid'] == 0)) {
                                             <td><?= htmlentities($row->EmploymentType) ?></td>
                                             <td>
                                                 <?php
-                                                $skills = explode(',', $row->Skills ?? '');
-                                                foreach ($skills as $skill) {
-                                                    $trimmed = trim($skill);
-                                                    if (!empty($trimmed)) {
-                                                        echo "<span class='tag-badge'>" . htmlentities($trimmed) . "</span>";
-                                                    }
+                                                foreach ($skillTags as $tag) {
+                                                    echo "<span class='tag-badge'>" . htmlentities($tag) . "</span>";
                                                 }
                                                 ?>
                                             </td>
+                                            <td class="verified-percentage"><?= $verifiedPercent ?>%</td>
                                             <td>
                                                 <a href="teacher-profile.php?viewid=<?= $row->TeacherID ?>"><i class="ti-eye color-primary"></i></a>
                                                 <a href="delete_teacher.php?delid=<?= $row->TeacherID ?>" onclick="return confirm('Do you really want to Delete ?');"><i class="ti-trash color-danger"></i></a>

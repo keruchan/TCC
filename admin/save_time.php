@@ -10,7 +10,8 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['schedule_type'], $_POST['days'])) {
     $scheduleType = trim($_POST['schedule_type']);
-    $daysOfWeek = trim($_POST['days']);
+    $daysOfWeek   = trim($_POST['days']);
+    $defaultUnits = isset($_POST['default_units']) ? intval($_POST['default_units']) : null;
 
     try {
         $dbh->beginTransaction();
@@ -20,78 +21,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['schedule_type'], $_PO
                 throw new Exception('Start and end time required for Regular schedule.');
             }
             $startTime = trim($_POST['start_time']);
-            $endTime = trim($_POST['end_time']);
+            $endTime   = trim($_POST['end_time']);
 
             $checkSql = "SELECT id FROM schedules WHERE schedule_type = 'Regular'";
-            $stmt = $dbh->prepare($checkSql);
+            $stmt     = $dbh->prepare($checkSql);
             $stmt->execute();
 
             if ($stmt->rowCount() > 0) {
-                $updateSql = "UPDATE schedules SET days_of_week = :days, start_time = :start, end_time = :end, updated_at = NOW() WHERE schedule_type = 'Regular'";
+                $updateSql = "UPDATE schedules 
+                                SET days_of_week = :days, 
+                                    start_time = :start, 
+                                    end_time = :end, 
+                                    default_units = :default_units, 
+                                    updated_at = NOW() 
+                              WHERE schedule_type = 'Regular'";
                 $stmt = $dbh->prepare($updateSql);
                 $stmt->execute([
-                    ':days' => $daysOfWeek,
-                    ':start' => $startTime,
-                    ':end' => $endTime
+                    ':days'         => $daysOfWeek,
+                    ':start'        => $startTime,
+                    ':end'          => $endTime,
+                    ':default_units'=> $defaultUnits
                 ]);
             } else {
-                $insertSql = "INSERT INTO schedules (schedule_type, days_of_week, start_time, end_time) VALUES ('Regular', :days, :start, :end)";
+                $insertSql = "INSERT INTO schedules 
+                                (schedule_type, days_of_week, start_time, end_time, default_units) 
+                              VALUES 
+                                ('Regular', :days, :start, :end, :default_units)";
                 $stmt = $dbh->prepare($insertSql);
                 $stmt->execute([
-                    ':days' => $daysOfWeek,
-                    ':start' => $startTime,
-                    ':end' => $endTime
+                    ':days'         => $daysOfWeek,
+                    ':start'        => $startTime,
+                    ':end'          => $endTime,
+                    ':default_units'=> $defaultUnits
                 ]);
             }
 
         } elseif ($scheduleType === 'Part-time') {
             $fields = ['morning_start', 'morning_end', 'afternoon_start', 'afternoon_end', 'night_start', 'night_end'];
-            $times = [];
+            $times  = [];
             foreach ($fields as $field) {
                 $times[$field] = trim($_POST[$field] ?? '');
             }
 
             $checkSql = "SELECT id FROM parttime_schedules LIMIT 1";
-            $stmt = $dbh->prepare($checkSql);
+            $stmt     = $dbh->prepare($checkSql);
             $stmt->execute();
 
             if ($stmt->rowCount() > 0) {
-                $updateSql = "UPDATE parttime_schedules SET 
-                                days_of_week = :days,
-                                morning_start = :morning_start,
-                                morning_end = :morning_end,
-                                afternoon_start = :afternoon_start,
-                                afternoon_end = :afternoon_end,
-                                night_start = :night_start,
-                                night_end = :night_end,
-                                updated_at = NOW()
+                $updateSql = "UPDATE parttime_schedules 
+                                SET days_of_week = :days,
+                                    morning_start = :morning_start,
+                                    morning_end = :morning_end,
+                                    afternoon_start = :afternoon_start,
+                                    afternoon_end = :afternoon_end,
+                                    night_start = :night_start,
+                                    night_end = :night_end,
+                                    default_units = :default_units,
+                                    updated_at = NOW()
                               WHERE id = (SELECT id FROM parttime_schedules LIMIT 1)";
                 $stmt = $dbh->prepare($updateSql);
             } else {
                 $updateSql = "INSERT INTO parttime_schedules 
-                                (days_of_week, morning_start, morning_end, afternoon_start, afternoon_end, night_start, night_end)
+                                (days_of_week, morning_start, morning_end, afternoon_start, afternoon_end, night_start, night_end, default_units)
                               VALUES 
-                                (:days, :morning_start, :morning_end, :afternoon_start, :afternoon_end, :night_start, :night_end)";
+                                (:days, :morning_start, :morning_end, :afternoon_start, :afternoon_end, :night_start, :night_end, :default_units)";
                 $stmt = $dbh->prepare($updateSql);
             }
 
             $stmt->execute([
-                ':days' => $daysOfWeek,
-                ':morning_start' => $times['morning_start'],
-                ':morning_end' => $times['morning_end'],
-                ':afternoon_start' => $times['afternoon_start'],
-                ':afternoon_end' => $times['afternoon_end'],
-                ':night_start' => $times['night_start'],
-                ':night_end' => $times['night_end']
+                ':days'           => $daysOfWeek,
+                ':morning_start'  => $times['morning_start'],
+                ':morning_end'    => $times['morning_end'],
+                ':afternoon_start'=> $times['afternoon_start'],
+                ':afternoon_end'  => $times['afternoon_end'],
+                ':night_start'    => $times['night_start'],
+                ':night_end'      => $times['night_end'],
+                ':default_units'  => $defaultUnits
             ]);
         }
 
         $dbh->commit();
-        $_SESSION['msg'] = ucfirst($scheduleType) . ' schedule saved successfully.';
+        $_SESSION['msg']      = ucfirst($scheduleType) . ' schedule saved successfully.';
         $_SESSION['msg_type'] = 'success';
     } catch (Exception $e) {
         $dbh->rollBack();
-        $_SESSION['msg'] = 'Error saving schedule: ' . $e->getMessage();
+        $_SESSION['msg']      = 'Error saving schedule: ' . $e->getMessage();
         $_SESSION['msg_type'] = 'danger';
     }
 
@@ -99,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['schedule_type'], $_PO
     exit;
 }
 
-$_SESSION['msg'] = 'Invalid request.';
+$_SESSION['msg']      = 'Invalid request.';
 $_SESSION['msg_type'] = 'danger';
 header('Location: time.php');
 exit;

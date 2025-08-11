@@ -9,16 +9,17 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
 
 // Fetch saved schedules from DB
 $schedules = [
-    'Regular' => ['days' => [], 'start_time' => '', 'end_time' => ''],
+    'Regular' => ['days' => [], 'start_time' => '', 'end_time' => '', 'default_units' => ''],
     'Part-time' => [
         'days' => [],
         'morning_start' => '', 'morning_end' => '',
         'afternoon_start' => '', 'afternoon_end' => '',
-        'night_start' => '', 'night_end' => ''
+        'night_start' => '', 'night_end' => '',
+        'default_units' => ''
     ]
 ];
 
-$sql = "SELECT schedule_type, days_of_week, start_time, end_time FROM schedules";
+$sql = "SELECT schedule_type, days_of_week, start_time, end_time, default_units FROM schedules";
 $query = $dbh->prepare($sql);
 $query->execute();
 $result = $query->fetchAll(PDO::FETCH_ASSOC);
@@ -29,6 +30,7 @@ foreach ($result as $row) {
         $schedules[$type]['days'] = explode(',', $row['days_of_week']);
         $schedules[$type]['start_time'] = $row['start_time'];
         $schedules[$type]['end_time'] = $row['end_time'];
+        $schedules[$type]['default_units'] = $row['default_units'] ?? '';
     }
 }
 
@@ -44,6 +46,7 @@ if ($parttime) {
     $schedules['Part-time']['afternoon_end'] = $parttime['afternoon_end'];
     $schedules['Part-time']['night_start'] = $parttime['night_start'];
     $schedules['Part-time']['night_end'] = $parttime['night_end'];
+    $schedules['Part-time']['default_units'] = $parttime['default_units'] ?? '';
 }
 ?>
 <!DOCTYPE html>
@@ -86,6 +89,23 @@ if ($parttime) {
             flex: 1;
             min-width: 250px;
         }
+        .no-bg-alert {
+            border: 1px solid #ccc;
+            border-left-width: 4px;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            padding: 12px 16px;
+        }
+        .no-bg-alert.success {
+            border-left-color: #28a745;
+            color: #28a745;
+            background: none;
+        }
+        .no-bg-alert.danger {
+            border-left-color: #dc3545;
+            color: #dc3545;
+            background: none;
+        }
     </style>
 </head>
 <body>
@@ -101,6 +121,13 @@ if ($parttime) {
                             <h1>Time Management</h1>
                         </div>
                     </div>
+
+                    <?php if (!empty($_SESSION['msg'])): ?>
+                        <div class="no-bg-alert <?= $_SESSION['msg_type'] ?>">
+                            <?= htmlentities($_SESSION['msg']) ?>
+                        </div>
+                        <?php unset($_SESSION['msg'], $_SESSION['msg_type']); ?>
+                    <?php endif; ?>
 
                     <!-- Regular Schedule -->
                     <div class="card alert">
@@ -135,6 +162,12 @@ if ($parttime) {
                                         <label for="regular_end">End Time:</label>
                                         <input type="time" name="end_time" id="regular_end" class="form-control" value="<?= htmlspecialchars($schedules['Regular']['end_time']) ?>" required>
                                     </div>
+                                </div>
+
+                                <div class="form-group mt-3">
+                                    <label for="regular_default_units">Default max number of units for Regular:</label>
+                                    <input type="number" name="default_units" id="regular_default_units" class="form-control" min="0" value="<?= htmlspecialchars($schedules['Regular']['default_units']) ?>" required>
+                                    <small class="form-text text-muted">Set the default max number of units a regular faculty can acquire/load.</small>
                                 </div>
 
                                 <button type="submit" class="btn btn-primary mt-3">Save Regular Schedule</button>
@@ -205,6 +238,12 @@ if ($parttime) {
                                             <input type="time" name="night_end" class="form-control" min="17:00" value="<?= htmlspecialchars($schedules['Part-time']['night_end']) ?>">
                                         </div>
                                     </div>
+                                </div>
+
+                                <div class="form-group mt-3">
+                                    <label for="parttime_default_units">Default max number of units for Part-time:</label>
+                                    <input type="number" name="default_units" id="parttime_default_units" class="form-control" min="0" value="<?= htmlspecialchars($schedules['Part-time']['default_units']) ?>" required>
+                                    <small class="form-text text-muted">Set the default max number of units a part-time faculty can acquire/load.</small>
                                 </div>
 
                                 <button type="submit" class="btn btn-primary mt-3">Save Part-time Schedule</button>

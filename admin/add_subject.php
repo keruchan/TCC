@@ -6,6 +6,13 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
     header('location:logout.php');
     exit;
 }
+
+// Fetch teachers for dropdown
+$teachers = [];
+$teacherSql = "SELECT TeacherID, FirstName, LastName FROM tblteacher ORDER BY LastName, FirstName";
+$teacherQuery = $dbh->prepare($teacherSql);
+$teacherQuery->execute();
+$teachers = $teacherQuery->fetchAll(PDO::FETCH_OBJ);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -37,6 +44,11 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
         }
         .small-input {
             max-width: 200px;
+        }
+        .teacher-tag .remove-tag {
+            margin-left: 5px;
+            cursor: pointer;
+            color: #fff;
         }
     </style>
 </head>
@@ -97,6 +109,24 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
                                     <div id="tags-container"></div>
                                 </div>
 
+                                <div class="form-group">
+                                    <label>Preferred Teacher(s)</label>
+                                    <div class="input-group mb-2">
+                                        <select id="teacher-select" class="form-control">
+                                            <option value="">Select Teacher</option>
+                                            <?php foreach ($teachers as $teacher): ?>
+                                                <option value="<?= $teacher->TeacherID ?>">
+                                                    <?= htmlentities($teacher->LastName . ', ' . $teacher->FirstName) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <div class="input-group-append">
+                                            <button type="button" id="add-teacher-btn" class="btn btn-info">+ Add Teacher</button>
+                                        </div>
+                                    </div>
+                                    <div id="teachers-container" class="d-flex flex-wrap"></div>
+                                </div>
+
                                 <button type="submit" name="submit" class="btn btn-primary">Save Subject</button>
                                 <a href="subject.php" class="btn btn-secondary">Cancel</a>
                             </form>
@@ -108,6 +138,7 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
         </div>
     </div>
 </div>
+
 <script src="../assets/js/lib/jquery.min.js"></script>
 <script src="../assets/js/lib/jquery.nanoscroller.min.js"></script>
 <script src="../assets/js/lib/menubar/sidebar.js"></script>
@@ -115,68 +146,101 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
 <script src="../assets/js/lib/bootstrap.min.js"></script>
 <script src="../assets/js/scripts.js"></script>
 <script>
-const tags = new Set();
-const container = document.getElementById('tags-container');
-const tagInput = document.getElementById('tag-input');
+    const tags = new Set();
+    const teachers = new Set();
+    const container = document.getElementById('tags-container');
+    const teacherContainer = document.getElementById('teachers-container');
+    const tagInput = document.getElementById('tag-input');
+    const teacherSelect = document.getElementById('teacher-select');
+    
+    function createTagElement(tag) {
+        const span = document.createElement('span');
+        span.className = 'tag-badge';
+        span.innerHTML = `${tag}<span class="remove-tag">&times;</span>`;
 
-function createTagElement(tag) {
-    const span = document.createElement('span');
-    span.className = 'tag-badge';
-    span.innerHTML = `${tag}<span class="remove-tag">&times;</span>`;
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'tags[]';
+        hidden.value = tag.toLowerCase();
+        span.appendChild(hidden);
 
-    const hidden = document.createElement('input');
-    hidden.type = 'hidden';
-    hidden.name = 'tags[]';
-    hidden.value = tag.toLowerCase();
-    span.appendChild(hidden);
-
-    span.querySelector('.remove-tag').addEventListener('click', () => {
-        tags.delete(tag);
-        span.remove();
-    });
-
-    return span;
-}
-
-document.getElementById('add-tag-btn').addEventListener('click', function () {
-    const value = tagInput.value.trim().toLowerCase();
-    if (value !== '' && !tags.has(value)) {
-        tags.add(value);
-        container.appendChild(createTagElement(value));
-        tagInput.value = '';
-    }
-});
-
-function validateTags() {
-    if (tags.size === 0) {
-        alert('Please add at least one tag.');
-        return false;
-    }
-    return true;
-}
-
-$('#num_meetings').change(function() {
-    var count = $(this).val();
-    var html = '';
-    for (var i = 1; i <= count; i++) {
-        html += '<div class="form-group">';
-        html += '<label>Duration (Minutes) for Meeting ' + i + '</label>';
-        html += '<input type="number" name="time_duration_' + i + '" class="form-control small-input" placeholder="e.g., 90" required>';
-        html += '</div>';
-    }
-    $('#time_duration_fields').html(html);
-});
-
-fetch('get_tags.php')
-    .then(res => res.json())
-    .then(data => {
-        $("#tag-input").autocomplete({
-            source: data,
-            select: function(event, ui) {
-                tagInput.value = ui.item.value;
-            }
+        span.querySelector('.remove-tag').addEventListener('click', () => {
+            tags.delete(tag);
+            span.remove();
         });
+
+        return span;
+    }
+
+    function createTeacherElement(teacherId, teacherName) {
+        const div = document.createElement('div');
+        div.className = 'teacher-tag tag-badge';
+        div.innerHTML = `${teacherName}<span class="remove-tag" data-teacher-id="${teacherId}">&times;</span>`;
+        
+        div.querySelector('.remove-tag').addEventListener('click', () => {
+            teachers.delete(teacherId);
+            div.remove();
+        });
+
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'preferred_teachers[]';
+        hidden.value = teacherId;
+        div.appendChild(hidden);
+
+        return div;
+    }
+
+    document.getElementById('add-tag-btn').addEventListener('click', function () {
+        const value = tagInput.value.trim().toLowerCase();
+        if (value !== '' && !tags.has(value)) {
+            tags.add(value);
+            container.appendChild(createTagElement(value));
+            tagInput.value = '';
+        }
     });
+
+    document.getElementById('add-teacher-btn').addEventListener('click', function () {
+        const teacherId = teacherSelect.value;
+        const teacherName = teacherSelect.options[teacherSelect.selectedIndex].text;
+        if (teacherId && !teachers.has(teacherId)) {
+            teachers.add(teacherId);
+            teacherContainer.appendChild(createTeacherElement(teacherId, teacherName));
+            teacherSelect.value = '';
+        }
+    });
+
+    function validateTags() {
+        if (tags.size === 0) {
+            alert('Please add at least one tag.');
+            return false;
+        }
+        return true;
+    }
+
+    $('#num_meetings').change(function() {
+        var count = $(this).val();
+        var html = '';
+        for (var i = 1; i <= count; i++) {
+            html += '<div class="form-group">';
+            html += '<label>Duration (Minutes) for Meeting ' + i + '</label>';
+            html += '<input type="number" name="time_duration_' + i + '" class="form-control small-input" placeholder="e.g., 90" required>';
+            html += '</div>';
+        }
+        $('#time_duration_fields').html(html);
+    });
+
+    fetch('get_tags.php')
+        .then(res => res.json())
+        .then(data => {
+            $("#tag-input").autocomplete({
+                source: data,
+                select: function(event, ui) {
+                    tagInput.value = ui.item.value;
+                }
+            });
+        });
+
 </script>
 <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
 <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">

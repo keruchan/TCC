@@ -319,7 +319,7 @@ if ($selected_year && $selected_sem && !empty($subject_overview)) {
                                 <br>Drag to reorder. Top is the highest priority. No duplicates are possible.
                             </div>
                             <div>
-                                <form id="prioritization-form" method="post" class="mt-2">
+                                <form id="prioritization-form" method="post" class="mt-2" action="auto-allocation.php" target="_blank">
                                     <input type="hidden" name="academic_year" value="<?= htmlentities($selected_year) ?>">
                                     <input type="hidden" name="semester" value="<?= htmlentities($selected_sem) ?>">
                                     <ol class="dd-priorities" id="priority-list">

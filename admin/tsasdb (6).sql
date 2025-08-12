@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Aug 12, 2025 at 12:22 AM
+-- Generation Time: Aug 12, 2025 at 03:16 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -127,6 +127,18 @@ CREATE TABLE `subject_allocations` (
   `created_at` datetime DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+--
+-- Dumping data for table `subject_allocations`
+--
+
+INSERT INTO `subject_allocations` (`id`, `subject_id`, `section_id`, `teacher_id`, `schedule_day`, `schedule_time_slot`, `allocated_units`, `allocation_status`, `allocation_reason`, `created_at`) VALUES
+(1, 23, 14, 11, 'Monday', '06:00:00 - 12:00', 0, 'allocated', NULL, '2025-08-12 07:26:27'),
+(3, 19, 14, 11, 'Monday', '06:00:00 - 12:00', 0, 'allocated', NULL, '2025-08-12 07:26:27'),
+(5, 20, 18, 11, 'Monday', '06:00:00 - 12:00', 0, 'allocated', NULL, '2025-08-12 07:26:27'),
+(8, 18, 18, 15, 'Monday', '06:00:00 - 12:00', 0, 'allocated', NULL, '2025-08-12 07:26:27'),
+(11, 21, 18, 11, 'Monday', '06:00:00 - 12:00', 0, 'allocated', NULL, '2025-08-12 07:26:27'),
+(14, 20, 19, 11, 'Monday', '06:00:00 - 12:00', 0, 'allocated', NULL, '2025-08-12 07:26:27');
+
 -- --------------------------------------------------------
 
 --
@@ -172,6 +184,45 @@ CREATE TABLE `tbladmin` (
 
 INSERT INTO `tbladmin` (`ID`, `AdminName`, `UserName`, `MobileNumber`, `Email`, `Password`, `AdminRegdate`) VALUES
 (1, 'SuperAdmin', 'admin', 5689784592, 'admin@gmail.com', '81dc9bdb52d04dc20036dbd8313ed055', '2023-05-25 11:58:35');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `tblallocation_priority_log`
+--
+
+CREATE TABLE `tblallocation_priority_log` (
+  `id` int(11) NOT NULL,
+  `academic_year` varchar(20) NOT NULL,
+  `semester` varchar(15) NOT NULL,
+  `priority_order` varchar(50) NOT NULL,
+  `generated_by` int(11) DEFAULT NULL,
+  `date_generated` datetime DEFAULT current_timestamp(),
+  `remark` varchar(255) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `tblallocation_priority_log`
+--
+
+INSERT INTO `tblallocation_priority_log` (`id`, `academic_year`, `semester`, `priority_order`, `generated_by`, `date_generated`, `remark`) VALUES
+(1, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 07:26:27', NULL),
+(2, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:18:08', NULL),
+(3, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:18:42', NULL),
+(4, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:18:56', NULL),
+(5, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:21:47', NULL),
+(6, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:28:47', NULL),
+(7, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:34:54', NULL),
+(8, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:39:29', NULL),
+(9, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:41:17', NULL),
+(10, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:44:31', NULL),
+(11, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:45:25', NULL),
+(12, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:52:42', NULL),
+(13, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:59:10', NULL),
+(14, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:59:40', NULL),
+(15, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 08:59:59', NULL),
+(16, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 09:00:03', NULL),
+(17, '2024-25', '1st', 'skills,educ,exp', 1, '2025-08-12 09:02:44', NULL);
 
 -- --------------------------------------------------------
 
@@ -291,7 +342,7 @@ INSERT INTO `tblqualification` (`id`, `subject_id`, `tags`) VALUES
 (5, 21, 'information,management'),
 (6, 22, 'statistics,statistic'),
 (7, 23, 'calculus'),
-(8, 24, ''),
+(8, 24, 'Math'),
 (10, 26, 'ml');
 
 -- --------------------------------------------------------
@@ -377,7 +428,7 @@ CREATE TABLE `tblsubject` (
   `subject_code` varchar(100) DEFAULT NULL,
   `units` int(11) NOT NULL DEFAULT 3,
   `description` text DEFAULT NULL,
-  `time_duration` varchar(50) DEFAULT NULL,
+  `time_duration` varchar(50) DEFAULT '90',
   `date_created` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -386,15 +437,15 @@ CREATE TABLE `tblsubject` (
 --
 
 INSERT INTO `tblsubject` (`ID`, `subject_name`, `subject_code`, `units`, `description`, `time_duration`, `date_created`) VALUES
-(18, 'Fundamentals of Programming', 'ITEC 102', 3, 'abc', NULL, '2025-07-18 05:21:11'),
-(19, 'Communication', 'ITEC 103', 3, 'ASDASDASDASSDDSFK FSJDKFJSD FD JKJDK FJDKFJ DKJF DKJF DKJF KD JFDK FJDK FJDKFKJD KJDKFJKFDJ KFDFDFJDKFJDK\r\nDL FJDKFJ DKF D KJFDK JFDK DJ FKDJ KDJFKDJFK DJ FKDJK DJF D  JDKJF GSHDKF', NULL, '2025-07-18 05:22:29'),
-(20, 'DATA MANAGEMENT', 'itec 205', 3, 'asdasdkjasdk', NULL, '2025-07-18 05:44:26'),
-(21, 'Info Management', 'ITEC 105', 3, 'INFORMATION MANAGEMENT FOCUSES ON INFORMATION MANAGEMENT', NULL, '2025-07-18 05:55:13'),
-(22, 'Statistics', 'STA101', 3, 'statistics', NULL, '2025-07-19 01:50:38'),
-(23, 'Calculus', 'CALC102', 3, 'CALCULUS CALCULUS', '180', '2025-07-19 02:00:38'),
+(18, 'Fundamentals of Programming', 'ITEC 102', 3, 'abc', '90', '2025-07-18 05:21:11'),
+(19, 'Communication', 'ITEC 103', 3, 'ASDASDASDASSDDSFK FSJDKFJSD FD JKJDK FJDKFJ DKJF DKJF DKJF KD JFDK FJDK FJDKFKJD KJDKFJKFDJ KFDFDFJDKFJDK\r\nDL FJDKFJ DKF D KJFDK JFDK DJ FKDJ KDJFKDJFK DJ FKDJK DJF D  JDKJF GSHDKF', '90', '2025-07-18 05:22:29'),
+(20, 'DATA MANAGEMENT', 'itec 205', 3, 'asdasdkjasdk', '90', '2025-07-18 05:44:26'),
+(21, 'Info Management', 'ITEC 105', 3, 'INFORMATION MANAGEMENT FOCUSES ON INFORMATION MANAGEMENT', '90', '2025-07-18 05:55:13'),
+(22, 'Statistics', 'STA101', 3, 'statistics', '90', '2025-07-19 01:50:38'),
+(23, 'Calculus', 'CALC102', 3, 'CALCULUS CALCULUS', '90,90,90', '2025-07-19 02:00:38'),
 (24, 'Mathematics', 'MATH101', 3, 'Math Math Math', '180,120', '2025-07-19 13:37:35'),
 (25, 'abc', 'abc', 1, 'abc', '90', '2025-08-10 12:10:05'),
-(26, 'ESports', 'E101', 3, 'Esports', '180', '2025-08-10 14:26:45');
+(26, 'ESports', 'E101', 3, 'Esports', '180,90', '2025-08-10 14:26:45');
 
 -- --------------------------------------------------------
 
@@ -607,6 +658,12 @@ ALTER TABLE `tbladmin`
   ADD PRIMARY KEY (`ID`);
 
 --
+-- Indexes for table `tblallocation_priority_log`
+--
+ALTER TABLE `tblallocation_priority_log`
+  ADD PRIMARY KEY (`id`);
+
+--
 -- Indexes for table `tblclass`
 --
 ALTER TABLE `tblclass`
@@ -714,7 +771,7 @@ ALTER TABLE `schedules`
 -- AUTO_INCREMENT for table `subject_allocations`
 --
 ALTER TABLE `subject_allocations`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=71;
 
 --
 -- AUTO_INCREMENT for table `subject_teachers`
@@ -727,6 +784,12 @@ ALTER TABLE `subject_teachers`
 --
 ALTER TABLE `tbladmin`
   MODIFY `ID` int(10) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+
+--
+-- AUTO_INCREMENT for table `tblallocation_priority_log`
+--
+ALTER TABLE `tblallocation_priority_log`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=18;
 
 --
 -- AUTO_INCREMENT for table `tblclass`
@@ -849,13 +912,3 @@ COMMIT;
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
-
-CREATE TABLE IF NOT EXISTS tblallocation_priority_log (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    academic_year VARCHAR(20) NOT NULL,
-    semester VARCHAR(15) NOT NULL,
-    priority_order VARCHAR(50) NOT NULL, -- e.g. "skills,educ,exp"
-    generated_by INT DEFAULT NULL, -- admin ID or user ID, can be NULL if not tracked
-    date_generated DATETIME DEFAULT CURRENT_TIMESTAMP,
-    remark VARCHAR(255) DEFAULT NULL
-);

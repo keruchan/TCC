@@ -23,6 +23,7 @@
                         </ul>
                     </li>
                       <li><a href="subject-allocation.php"><i class="ti-files"></i>Subject Allocation</a>
+                      <li><a href="auto-allocation.php"><i class="ti-files"></i>Allocated Subjects</a>
                     </li>
                    
                   <li><a href="search.php" ><i class="ti-search"></i>Search</a></li>

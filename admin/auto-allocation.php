@@ -260,7 +260,8 @@ foreach ($subject_sections as $ss) {
                         $assigned_meetings[] = [
                             'day' => $day,
                             'time' => "{$start_time} - {$end_time}",
-                            'duration' => $duration_minutes
+                            'duration' => $duration_minutes,
+                            'room' => '' // default empty, editable
                         ];
                         $instructor_blocks[] = ['day'=>$day, 'start'=>$block_start, 'end'=>$block_end];
                         $section_blocks[] = ['day'=>$day, 'start'=>$block_start, 'end'=>$block_end];
@@ -289,7 +290,8 @@ foreach ($subject_sections as $ss) {
                 'section' => $section_code,
                 'day' => $meeting['day'],
                 'time' => $meeting['time'],
-                'duration' => $meeting['duration']
+                'duration' => $meeting['duration'],
+                'room' => $meeting['room']
             ];
         }
     }
@@ -341,6 +343,7 @@ foreach ($subject_sections as $ss) {
                                 </div>
                             <?php endif; ?>
                             <div class="table-responsive">
+                                <form method="post" action="save-rooms.php">
                                 <table id="allocationTable" class="table table-striped">
                                     <thead>
                                         <tr>
@@ -354,10 +357,11 @@ foreach ($subject_sections as $ss) {
                                             <th>Day</th>
                                             <th>Time (Start-End)</th>
                                             <th>Duration (min)</th>
+                                            <th>Room</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                    <?php foreach ($allocations as $alloc): ?>
+                                    <?php foreach ($allocations as $idx => $alloc): ?>
                                         <tr>
                                             <td><?= $alloc['num'] ?></td>
                                             <td><?= htmlentities($alloc['instructor']) ?></td>
@@ -369,13 +373,18 @@ foreach ($subject_sections as $ss) {
                                             <td><?= htmlentities($alloc['day']) ?></td>
                                             <td><?= htmlentities($alloc['time']) ?></td>
                                             <td><?= htmlentities($alloc['duration']) ?></td>
+                                            <td>
+                                                <input type="text" name="room[<?= $idx ?>]" class="form-control" value="<?= isset($alloc['room']) ? htmlentities($alloc['room']) : '' ?>">
+                                            </td>
                                         </tr>
                                     <?php endforeach; ?>
                                     <?php if (empty($allocations)): ?>
-                                        <tr><td colspan="10"><i>No allocation generated.</i></td></tr>
+                                        <tr><td colspan="11"><i>No allocation generated.</i></td></tr>
                                     <?php endif; ?>
                                     </tbody>
                                 </table>
+                                <button type="submit" class="btn btn-primary">Save Rooms</button>
+                                </form>
                             </div>
                         </div>
                         <a href="subject-allocation.php" class="btn btn-secondary mt-3">Back to Subject Allocation</a>

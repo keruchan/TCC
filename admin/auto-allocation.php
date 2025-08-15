@@ -39,15 +39,13 @@ $subject_sections = [];
 $subject_preferred_teachers = [];
 $teachers = [];
 $subject_skill_tags = [];
-$allocations = [];
-$no_instructor_subjects = [];
+$allocations = []; // array of arrays per subject-section
+$no_instructor_subjects = []; // array of arrays per subject-section
 $allocation_errors = [];
 $alloc_cnt = 1;
 $section_letters = range('A', 'Z');
-$section_schedules = [];
 $instructor_dropdown = [];
 
-// Only load data if viewing allocation for a specific academic year/semester
 if ($show_table) {
     // Fetch all subject-sections, including time_duration
     $sql = "SELECT 
@@ -183,7 +181,10 @@ if ($show_table) {
         'evening' => ['start' => '17:30', 'end' => '20:30'],
     ];
 
-    // -- Main Allocation Loop --
+    // --- BEGIN MAIN ALLOCATION ---
+    // Group allocations by subject-section for per-section dropdown sync
+    $allocations_by_section = []; // [section_uid][meeting_idx] = row
+
     foreach ($subject_sections as $ss) {
         $subject_id = $ss['subject_id'];
         $section_id = $ss['section_id'];
@@ -213,62 +214,26 @@ if ($show_table) {
 
         for ($sec = 0; $sec < $num_sections; $sec++) {
             $section_code = $section_letters[$sec] ?? ($sec+1);
-            // If no qualified instructors: allocate to professor xyz, put at top
-            if ($no_qualified) {
-                for ($m = 0; $m < $meetings_per_week; $m++) {
-                    $duration_minutes = $durations[$m];
-                    $day = $available_days[$m % count($available_days)];
-                    $slot = array_keys($schedule_times)[$m % count($schedule_times)];
-                    $slot_time = $schedule_times[$slot];
-                    $slot_start_min = time_to_minutes($slot_time['start']);
-                    $block_start = $slot_start_min;
-                    $start_time = minutes_to_time($block_start);
-                    $end_time = minutes_to_time($block_start + $duration_minutes);
-                    $no_instructor_subjects[] = [
-                        'num' => $alloc_cnt++,
-                        'instructor_id' => 'xyz',
-                        'instructor' => 'Professor XYZ',
-                        'course' => $ss['CourseName'],
-                        'subject' => $ss['SubjectName'],
-                        'subject_code' => $ss['SubjectCode'],
-                        'year' => $ss['year_level'],
-                        'section' => $section_code,
-                        'day' => $day,
-                        'time' => "{$start_time} - {$end_time}",
-                        'duration' => $duration_minutes,
-                        'room' => '',
-                    ];
-                }
-                $allocation_errors[] = "No qualified instructors found for subject '{$ss['SubjectName']}' (ID: {$subject_id}).";
-                continue;
-            }
-
-            // Otherwise, normal allocation
-            $preferred_ids = $subject_preferred_teachers[$subject_id] ?? [];
-            $assigned_teacher_id = null;
-            foreach ($preferred_ids as $pid) {
-                if (isset($teachers[$pid])) { $assigned_teacher_id = $pid; break; }
-            }
-            if (!$assigned_teacher_id) {
-                $assigned_teacher_id = find_least_loaded_teacher($qualified_ids, $teachers);
-            }
-            if (!$assigned_teacher_id) continue;
-            $teacher = $teachers[$assigned_teacher_id];
-            $teachers[$assigned_teacher_id]['assigned_sections']++;
-
+            $section_uid = "{$subject_id}_{$section_id}_{$section_code}";
+            $rows = [];
+            // Meetings for this section
             for ($m = 0; $m < $meetings_per_week; $m++) {
                 $duration_minutes = $durations[$m];
                 $day = $available_days[$m % count($available_days)];
                 $slot = array_keys($schedule_times)[$m % count($schedule_times)];
                 $slot_time = $schedule_times[$slot];
                 $slot_start_min = time_to_minutes($slot_time['start']);
-                $start_time = minutes_to_time($slot_start_min);
-                $end_time = minutes_to_time($slot_start_min + $duration_minutes);
-                $allocations[] = [
+                $block_start = $slot_start_min;
+                $start_time = minutes_to_time($block_start);
+                $end_time = minutes_to_time($block_start + $duration_minutes);
+                $row = [
+                    'section_uid' => $section_uid,
+                    'meeting_idx' => $m,
                     'num' => $alloc_cnt++,
-                    'instructor_id' => $assigned_teacher_id,
-                    'instructor' => $teacher['FirstName'] . ' ' . $teacher['LastName'],
+                    'instructor_id' => $no_qualified ? 'xyz' : null,
+                    'instructor' => $no_qualified ? 'Professor XYZ' : '',
                     'course' => $ss['CourseName'],
+                    'subject_id' => $subject_id,
                     'subject' => $ss['SubjectName'],
                     'subject_code' => $ss['SubjectCode'],
                     'year' => $ss['year_level'],
@@ -276,10 +241,123 @@ if ($show_table) {
                     'day' => $day,
                     'time' => "{$start_time} - {$end_time}",
                     'duration' => $duration_minutes,
-                    'room' => ''
+                    'room' => '',
+                    'no_qualified' => $no_qualified,
+                    'section_id' => $section_id,
                 ];
+                $rows[] = $row;
+            }
+            // Assign to correct grouping
+            if ($no_qualified) {
+                $no_instructor_subjects[$section_uid] = $rows;
+                $allocation_errors[] = "No qualified instructors found for subject '{$ss['SubjectName']}' (ID: {$subject_id}).";
+            } else {
+                // Assign instructor: always prioritize preferred (even if not qualified)
+                $preferred_ids = $subject_preferred_teachers[$subject_id] ?? [];
+                $assigned_teacher_id = null;
+                foreach ($preferred_ids as $pid) {
+                    if (isset($teachers[$pid])) { $assigned_teacher_id = $pid; break; }
+                }
+                if (!$assigned_teacher_id) {
+                    $assigned_teacher_id = find_least_loaded_teacher($qualified_ids, $teachers);
+                }
+                if (!$assigned_teacher_id) continue;
+                foreach ($rows as &$row_ref) {
+                    $row_ref['instructor_id'] = $assigned_teacher_id;
+                    $row_ref['instructor'] = $teachers[$assigned_teacher_id]['FirstName'].' '.$teachers[$assigned_teacher_id]['LastName'];
+                }
+                unset($row_ref);
+                $allocations_by_section[$section_uid] = $rows;
+                $teachers[$assigned_teacher_id]['assigned_sections']++;
             }
         }
+    }
+
+    // Now, for each section_uid, compute valid instructor choices (no conflict for ALL meetings)
+    $dropdown_valid_instructors = [];
+    foreach ($allocations_by_section as $section_uid => $meetings) {
+        $valid = [];
+        foreach ($instructor_dropdown as $tid => $name) {
+            if ($tid === 'xyz') continue;
+            $has_conflict = false;
+            foreach ($meetings as $row) {
+                $row_times = explode(' - ', $row['time']);
+                $row_start = time_to_minutes($row_times[0]);
+                $row_end   = time_to_minutes($row_times[1]);
+                $teacher_blocks = [];
+                foreach ($allocations_by_section as $_section_uid => $_rows) {
+                    if ($_section_uid === $section_uid) break;
+                    foreach ($_rows as $_row) {
+                        if ($_row['instructor_id'] == $tid) {
+                            $block_day = $_row['day'];
+                            $block_times = explode(' - ', $_row['time']);
+                            $block_start = time_to_minutes($block_times[0]);
+                            $block_end   = time_to_minutes($block_times[1]);
+                            $teacher_blocks[] = ['day'=>$block_day, 'start'=>$block_start, 'end'=>$block_end];
+                        }
+                    }
+                }
+                foreach ($meetings as $check_row) {
+                    if ($check_row['meeting_idx'] === $row['meeting_idx']) break;
+                    if ($check_row['instructor_id'] == $tid) {
+                        $block_day = $check_row['day'];
+                        $block_times = explode(' - ', $check_row['time']);
+                        $block_start = time_to_minutes($block_times[0]);
+                        $block_end   = time_to_minutes($block_times[1]);
+                        $teacher_blocks[] = ['day'=>$block_day, 'start'=>$block_start, 'end'=>$block_end];
+                    }
+                }
+                if (has_time_overlap($teacher_blocks, $row['day'], $row_start, $row_end)) {
+                    $has_conflict = true;
+                    break;
+                }
+            }
+            if (!$has_conflict) $valid[$tid] = $name;
+        }
+        $dropdown_valid_instructors[$section_uid] = $valid;
+    }
+    foreach ($no_instructor_subjects as $section_uid => $meetings) {
+        $valid = [];
+        foreach ($instructor_dropdown as $tid => $name) {
+            $has_conflict = false;
+            if ($tid === 'xyz') {
+                $valid[$tid] = $name;
+                continue;
+            }
+            foreach ($meetings as $row) {
+                $row_times = explode(' - ', $row['time']);
+                $row_start = time_to_minutes($row_times[0]);
+                $row_end   = time_to_minutes($row_times[1]);
+                $teacher_blocks = [];
+                foreach ($allocations_by_section as $_section_uid => $_rows) {
+                    foreach ($_rows as $_row) {
+                        if ($_row['instructor_id'] == $tid) {
+                            $block_day = $_row['day'];
+                            $block_times = explode(' - ', $_row['time']);
+                            $block_start = time_to_minutes($block_times[0]);
+                            $block_end   = time_to_minutes($block_times[1]);
+                            $teacher_blocks[] = ['day'=>$block_day, 'start'=>$block_start, 'end'=>$block_end];
+                        }
+                    }
+                }
+                foreach ($meetings as $check_row) {
+                    if ($check_row['meeting_idx'] === $row['meeting_idx']) break;
+                    if ($check_row['instructor_id'] == $tid) {
+                        $block_day = $check_row['day'];
+                        $block_times = explode(' - ', $check_row['time']);
+                        $block_start = time_to_minutes($block_times[0]);
+                        $block_end   = time_to_minutes($block_times[1]);
+                        $teacher_blocks[] = ['day'=>$block_day, 'start'=>$block_start, 'end'=>$block_end];
+                    }
+                }
+                if (has_time_overlap($teacher_blocks, $row['day'], $row_start, $row_end)) {
+                    $has_conflict = true;
+                    break;
+                }
+            }
+            if (!$has_conflict) $valid[$tid] = $name;
+        }
+        $dropdown_valid_instructors[$section_uid] = $valid;
     }
 }
 ?>
@@ -409,7 +487,7 @@ if ($show_table) {
                                 </div>
                             <?php endif; ?>
                             <div class="table-responsive">
-                                <form method="post" action="save-rooms.php">
+                                <form method="post" action="finalize-schedule.php" id="allocForm">
                                 <input type="hidden" name="academic_year" value="<?= htmlentities($selected_year) ?>">
                                 <input type="hidden" name="semester" value="<?= htmlentities($selected_sem) ?>">
                                 <table id="allocationTable" class="table table-striped">
@@ -429,60 +507,92 @@ if ($show_table) {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                    <?php foreach ($no_instructor_subjects as $idx => $alloc): ?>
-                                        <tr class="no-instructor-row">
-                                            <td><?= $alloc['num'] ?></td>
-                                            <td>
-                                                <select name="instructor_no[<?= $idx ?>]" class="dropdown-modern dropdown-prof">
-                                                    <?php foreach ($instructor_dropdown as $tid => $name): ?>
-                                                        <option value="<?= $tid ?>" <?= $tid=='xyz'?'selected':'' ?>><?= htmlentities($name) ?></option>
-                                                    <?php endforeach; ?>
-                                                </select>
-                                            </td>
-                                            <td><?= htmlentities($alloc['course']) ?></td>
-                                            <td><?= htmlentities($alloc['subject']) ?></td>
-                                            <td><?= htmlentities($alloc['subject_code']) ?></td>
-                                            <td><?= htmlentities($alloc['year']) ?></td>
-                                            <td><?= htmlentities($alloc['section']) ?></td>
-                                            <td><?= htmlentities($alloc['day']) ?></td>
-                                            <td><?= htmlentities($alloc['time']) ?></td>
-                                            <td><?= htmlentities($alloc['duration']) ?></td>
-                                            <td>
-                                                <input type="text" name="room_noinstructor[<?= $idx ?>]" class="form-control" value="<?= isset($alloc['room']) ? htmlentities($alloc['room']) : '' ?>">
-                                            </td>
-                                        </tr>
+                                    <!-- For no instructor sections -->
+                                    <?php foreach ($no_instructor_subjects as $section_uid => $meetings): ?>
+                                        <?php foreach ($meetings as $row_idx => $alloc): ?>
+                                            <tr class="no-instructor-row">
+                                                <td><?= $alloc['num'] ?></td>
+                                                <td>
+                                                    <select name="instructor_no[<?= $section_uid ?>][]" 
+                                                        class="dropdown-modern dropdown-prof instructor-dropdown"
+                                                        data-section="<?= $section_uid ?>">
+                                                        <?php foreach ($dropdown_valid_instructors[$section_uid] as $tid => $name): ?>
+                                                            <option value="<?= $tid ?>" <?= ($alloc['instructor_id']==$tid)?'selected':'' ?>>
+                                                                <?= htmlentities($name) ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
+                                                    </select>
+                                                </td>
+                                                <td><?= htmlentities($alloc['course']) ?></td>
+                                                <td><?= htmlentities($alloc['subject']) ?></td>
+                                                <td><?= htmlentities($alloc['subject_code']) ?></td>
+                                                <td><?= htmlentities($alloc['year']) ?></td>
+                                                <td><?= htmlentities($alloc['section']) ?></td>
+                                                <td><?= htmlentities($alloc['day']) ?></td>
+                                                <td><?= htmlentities($alloc['time']) ?></td>
+                                                <td><?= htmlentities($alloc['duration']) ?></td>
+                                                <td>
+                                                    <input type="text" name="room_noinstructor[<?= $section_uid ?>][<?= $row_idx ?>]" class="form-control" value="<?= isset($alloc['room']) ? htmlentities($alloc['room']) : '' ?>">
+                                                    <!-- Hidden fields -->
+                                                    <input type="hidden" name="course[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['course']) ?>">
+                                                    <input type="hidden" name="subject_id[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['subject_id']) ?>">
+                                                    <input type="hidden" name="subject_code[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['subject_code']) ?>">
+                                                    <input type="hidden" name="subject_name[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['subject']) ?>">
+                                                    <input type="hidden" name="year_level[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['year']) ?>">
+                                                    <input type="hidden" name="section[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['section']) ?>">
+                                                    <input type="hidden" name="day[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['day']) ?>">
+                                                    <input type="hidden" name="time[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['time']) ?>">
+                                                    <input type="hidden" name="duration[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['duration']) ?>">
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
                                     <?php endforeach; ?>
-                                    <?php foreach ($allocations as $idx => $alloc): ?>
-                                        <tr>
-                                            <td><?= $alloc['num'] ?></td>
-                                            <td>
-                                                <select name="instructor[<?= $idx ?>]" class="dropdown-modern dropdown-prof">
-                                                    <?php foreach ($instructor_dropdown as $tid => $name): ?>
-                                                        <option value="<?= $tid ?>" <?= $alloc['instructor_id']==$tid?'selected':'' ?>>
-                                                            <?= htmlentities($name) ?>
-                                                        </option>
-                                                    <?php endforeach; ?>
-                                                </select>
-                                            </td>
-                                            <td><?= htmlentities($alloc['course']) ?></td>
-                                            <td><?= htmlentities($alloc['subject']) ?></td>
-                                            <td><?= htmlentities($alloc['subject_code']) ?></td>
-                                            <td><?= htmlentities($alloc['year']) ?></td>
-                                            <td><?= htmlentities($alloc['section']) ?></td>
-                                            <td><?= htmlentities($alloc['day']) ?></td>
-                                            <td><?= htmlentities($alloc['time']) ?></td>
-                                            <td><?= htmlentities($alloc['duration']) ?></td>
-                                            <td>
-                                                <input type="text" name="room[<?= $idx ?>]" class="form-control" value="<?= isset($alloc['room']) ? htmlentities($alloc['room']) : '' ?>">
-                                            </td>
-                                        </tr>
+                                    <!-- For qualified allocations -->
+                                    <?php foreach ($allocations_by_section as $section_uid => $meetings): ?>
+                                        <?php foreach ($meetings as $row_idx => $alloc): ?>
+                                            <tr>
+                                                <td><?= $alloc['num'] ?></td>
+                                                <td>
+                                                    <select name="instructor[<?= $section_uid ?>][]" 
+                                                        class="dropdown-modern dropdown-prof instructor-dropdown"
+                                                        data-section="<?= $section_uid ?>">
+                                                        <?php foreach ($dropdown_valid_instructors[$section_uid] as $tid => $name): ?>
+                                                            <option value="<?= $tid ?>" <?= ($alloc['instructor_id']==$tid)?'selected':'' ?>>
+                                                                <?= htmlentities($name) ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
+                                                    </select>
+                                                </td>
+                                                <td><?= htmlentities($alloc['course']) ?></td>
+                                                <td><?= htmlentities($alloc['subject']) ?></td>
+                                                <td><?= htmlentities($alloc['subject_code']) ?></td>
+                                                <td><?= htmlentities($alloc['year']) ?></td>
+                                                <td><?= htmlentities($alloc['section']) ?></td>
+                                                <td><?= htmlentities($alloc['day']) ?></td>
+                                                <td><?= htmlentities($alloc['time']) ?></td>
+                                                <td><?= htmlentities($alloc['duration']) ?></td>
+                                                <td>
+                                                    <input type="text" name="room[<?= $section_uid ?>][<?= $row_idx ?>]" class="form-control" value="<?= isset($alloc['room']) ? htmlentities($alloc['room']) : '' ?>">
+                                                    <!-- Hidden fields -->
+                                                    <input type="hidden" name="course[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['course']) ?>">
+                                                    <input type="hidden" name="subject_id[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['subject_id']) ?>">
+                                                    <input type="hidden" name="subject_code[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['subject_code']) ?>">
+                                                    <input type="hidden" name="subject_name[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['subject']) ?>">
+                                                    <input type="hidden" name="year_level[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['year']) ?>">
+                                                    <input type="hidden" name="section[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['section']) ?>">
+                                                    <input type="hidden" name="day[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['day']) ?>">
+                                                    <input type="hidden" name="time[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['time']) ?>">
+                                                    <input type="hidden" name="duration[<?= $section_uid ?>][<?= $row_idx ?>]" value="<?= htmlentities($alloc['duration']) ?>">
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
                                     <?php endforeach; ?>
-                                    <?php if (empty($allocations) && empty($no_instructor_subjects)): ?>
+                                    <?php if (empty($allocations_by_section) && empty($no_instructor_subjects)): ?>
                                         <tr><td colspan="11"><i>No allocation generated.</i></td></tr>
                                     <?php endif; ?>
                                     </tbody>
                                 </table>
-                                <button type="submit" class="btn btn-primary">Save Rooms</button>
+                                <button type="submit" class="btn btn-primary">Finalize Schedule</button>
                                 </form>
                             </div>
                         </div>
@@ -504,6 +614,13 @@ if ($show_table) {
 <script>
 $(document).ready(function() {
     $('#allocationTable').DataTable();
+
+    // Synchronized instructor dropdowns per section
+    $('.instructor-dropdown').on('change', function() {
+        var section = $(this).attr('data-section');
+        var selected = $(this).val();
+        $('select.instructor-dropdown[data-section="'+section+'"]').val(selected);
+    });
 });
 </script>
 </body>

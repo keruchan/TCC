@@ -10,289 +10,275 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
     exit;
 }
 
-$admin_id = $_SESSION['tsasaid'] ?? null;
-$selected_year = $_POST['academic_year'] ?? '';
-$selected_sem = $_POST['semester'] ?? '';
+// Fetch academic years and semesters for dropdowns
+$ay_stmt = $dbh->prepare("SELECT DISTINCT academic_year FROM tblclass ORDER BY academic_year DESC");
+$ay_stmt->execute();
+$academic_years = $ay_stmt->fetchAll(PDO::FETCH_COLUMN);
+
+$sem_stmt = $dbh->prepare("SELECT DISTINCT semester FROM tblclass ORDER BY semester ASC");
+$sem_stmt->execute();
+$semesters = $sem_stmt->fetchAll(PDO::FETCH_COLUMN);
+
+// Get selected year/sem (from POST or default to latest)
+$selected_year = $_POST['academic_year'] ?? ($academic_years[0] ?? '');
+$selected_sem = $_POST['semester'] ?? ($semesters[0] ?? '');
 $priorities = explode(',', $_POST['priorities'] ?? 'skills,educ,exp');
 
+// Only process allocation if form is submitted (View Allocations pressed)
+$show_table = ($_SERVER['REQUEST_METHOD'] === "POST" && isset($_POST['academic_year']) && isset($_POST['semester']));
+
 // Priority log
-if ($selected_year && $selected_sem && !empty($priorities)) {
+if ($show_table && !empty($priorities)) {
     $priority_order = implode(',', $priorities);
     $priority_log_stmt = $dbh->prepare("INSERT INTO tblallocation_priority_log (academic_year, semester, priority_order, generated_by, date_generated) VALUES (?, ?, ?, ?, NOW())");
-    $priority_log_stmt->execute([$selected_year, $selected_sem, $priority_order, $admin_id]);
+    $priority_log_stmt->execute([$selected_year, $selected_sem, $priority_order, $_SESSION['tsasaid']]);
 }
 
-// Fetch all subject-sections, including time_duration
-$sql = "SELECT 
-            cl.id AS section_id,
-            cl.course_id, 
-            c.CourseName, 
-            cur.subject_id, 
-            s.subject_name AS SubjectName, 
-            s.subject_code AS SubjectCode,
-            s.description AS SubjectDesc,
-            s.time_duration AS time_duration,
-            cur.year_level, 
-            cl.section
-        FROM tblclass cl
-        JOIN tblcourse c ON cl.course_id = c.ID
-        JOIN tblcurriculum cur ON cur.course_id = cl.course_id AND cur.year_level = cl.year_level AND cur.semester = cl.semester
-        JOIN tblsubject s ON cur.subject_id = s.ID
-        WHERE cl.academic_year = ? AND cl.semester = ?
-        ORDER BY c.CourseName, cl.year_level, s.subject_name, cl.section";
-$stmt = $dbh->prepare($sql);
-$stmt->execute([$selected_year, $selected_sem]);
-$subject_sections = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Preferred instructors for each subject
+// Prepare allocation variables
+$subject_sections = [];
 $subject_preferred_teachers = [];
-$pref_stmt = $dbh->prepare("SELECT subject_id, teacher_id FROM subject_teachers");
-$pref_stmt->execute();
-while ($row = $pref_stmt->fetch(PDO::FETCH_ASSOC)) {
-    $subject_preferred_teachers[$row['subject_id']][] = $row['teacher_id'];
-}
-
-// List all instructors (qualified and not)
 $teachers = [];
-$teacher_stmt = $dbh->prepare("SELECT * FROM tblteacher");
-$teacher_stmt->execute();
-while ($t = $teacher_stmt->fetch(PDO::FETCH_ASSOC)) {
-    $id = $t['TeacherID'];
-    $teachers[$id] = $t;
-    $teachers[$id]['skills'] = [];
-    $teachers[$id]['experience'] = [];
-    $teachers[$id]['preferred_times'] = [];
-    $teachers[$id]['assigned_sections'] = 0;
-    $teachers[$id]['schedule_blocks'] = [];
-}
-
-// Fetch all skills (verified and not)
-$skill_stmt = $dbh->prepare("SELECT TeacherID, SkillName FROM tblskills");
-$skill_stmt->execute();
-while ($row = $skill_stmt->fetch(PDO::FETCH_ASSOC)) {
-    $skills = array_map('trim', explode(',', strtolower($row['SkillName'])));
-    if (isset($teachers[$row['TeacherID']])) {
-        $teachers[$row['TeacherID']]['skills'] = array_merge($teachers[$row['TeacherID']]['skills'], $skills);
-    }
-}
-
-// Experience
-$exp_stmt = $dbh->prepare("SELECT TeacherID, SubjectsTaught FROM tblteachingload");
-$exp_stmt->execute();
-while ($row = $exp_stmt->fetch(PDO::FETCH_ASSOC)) {
-    $subjects = array_map('trim', explode(',', strtolower($row['SubjectsTaught'])));
-    if (isset($teachers[$row['TeacherID']])) {
-        $teachers[$row['TeacherID']]['experience'] = array_merge($teachers[$row['TeacherID']]['experience'], $subjects);
-    }
-}
-
-// Teacher preferred times
-$pt_stmt = $dbh->prepare("SELECT teacher_id, day_of_week, time_slot FROM teacher_preferred_times");
-$pt_stmt->execute();
-while ($row = $pt_stmt->fetch(PDO::FETCH_ASSOC)) {
-    if (isset($teachers[$row['teacher_id']])) {
-        $teachers[$row['teacher_id']]['preferred_times'][] = strtolower($row['day_of_week']) . '-' . strtolower($row['time_slot']);
-    }
-}
-
-// Fetch subject skill tags (for fuzzy/related matching)
 $subject_skill_tags = [];
-$qual_stmt = $dbh->prepare("SELECT subject_id, tags FROM tblqualification");
-$qual_stmt->execute();
-while ($row = $qual_stmt->fetch(PDO::FETCH_ASSOC)) {
-    $tags = array_map('trim', explode(',', strtolower($row['tags'])));
-    $subject_skill_tags[$row['subject_id']] = $tags;
-}
-
-// Day and slot/time mapping
-$available_days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-$schedule_times = [
-    'morning' => ['start' => '07:30', 'end' => '11:30'],
-    'afternoon' => ['start' => '13:00', 'end' => '17:00'],
-    'evening' => ['start' => '17:30', 'end' => '20:30'],
-];
-
-// Helper: Time functions
-function time_to_minutes($time) {
-    list($h, $m) = explode(':', $time);
-    return $h * 60 + $m;
-}
-function minutes_to_time($minutes) {
-    $h = floor($minutes / 60);
-    $m = $minutes % 60;
-    return sprintf('%02d:%02d', $h, $m);
-}
-function has_time_overlap($blocks, $day, $start_min, $end_min) {
-    foreach ($blocks as $block) {
-        if ($block['day'] === $day) {
-            if ($start_min < $block['end'] && $end_min > $block['start']) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// Fuzzy skill matching: typo/case-insensitive/related
-function fuzzy_skill_match($teacher_skills, $subject_tags) {
-    foreach ($teacher_skills as $skill) {
-        foreach ($subject_tags as $tag) {
-            if (strcasecmp($skill, $tag) === 0) return true;
-            if (levenshtein($skill, $tag) <= 2) return true;
-            if (stripos($skill, $tag) !== false || stripos($tag, $skill) !== false) return true;
-        }
-    }
-    return false;
-}
-
-// Even distribution (not using MaxLoad)
-function find_least_loaded_teacher($qualified_ids, &$teachers) {
-    $min = PHP_INT_MAX; $chosen = null;
-    foreach ($qualified_ids as $id) {
-        if ($teachers[$id]['assigned_sections'] < $min) {
-            $min = $teachers[$id]['assigned_sections'];
-            $chosen = $id;
-        }
-    }
-    return $chosen;
-}
-
 $allocations = [];
+$no_instructor_subjects = [];
 $allocation_errors = [];
 $alloc_cnt = 1;
 $section_letters = range('A', 'Z');
-$section_schedules = []; // $section_schedules[section_id][section_letter][] = [day, start, end]
+$section_schedules = [];
+$instructor_dropdown = [];
 
-foreach ($subject_sections as $ss) {
-    $subject_id = $ss['subject_id'];
-    $section_id = $ss['section_id'];
-    $num_sections = intval($ss['section']);
+// Only load data if viewing allocation for a specific academic year/semester
+if ($show_table) {
+    // Fetch all subject-sections, including time_duration
+    $sql = "SELECT 
+                cl.id AS section_id,
+                cl.course_id, 
+                c.CourseName, 
+                cur.subject_id, 
+                s.subject_name AS SubjectName, 
+                s.subject_code AS SubjectCode,
+                s.description AS SubjectDesc,
+                s.time_duration AS time_duration,
+                cur.year_level, 
+                cl.section
+            FROM tblclass cl
+            JOIN tblcourse c ON cl.course_id = c.ID
+            JOIN tblcurriculum cur ON cur.course_id = cl.course_id AND cur.year_level = cl.year_level AND cur.semester = cl.semester
+            JOIN tblsubject s ON cur.subject_id = s.ID
+            WHERE cl.academic_year = ? AND cl.semester = ?
+            ORDER BY c.CourseName, cl.year_level, s.subject_name, cl.section";
+    $stmt = $dbh->prepare($sql);
+    $stmt->execute([$selected_year, $selected_sem]);
+    $subject_sections = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Parse session durations from time_duration (e.g. "180,120" → [180,120])
-    $durations = [];
-    if (isset($ss['time_duration']) && trim($ss['time_duration']) !== '') {
-        $durations = array_map('intval', array_filter(array_map('trim', explode(',', $ss['time_duration']))));
+    // Preferred instructors for each subject
+    $pref_stmt = $dbh->prepare("SELECT subject_id, teacher_id FROM subject_teachers");
+    $pref_stmt->execute();
+    while ($row = $pref_stmt->fetch(PDO::FETCH_ASSOC)) {
+        $subject_preferred_teachers[$row['subject_id']][] = $row['teacher_id'];
     }
-    if (empty($durations)) $durations = [90, 90];
-    $meetings_per_week = count($durations);
 
-    $subject_tags = $subject_skill_tags[$subject_id] ?? [];
+    // List all instructors (qualified and not)
+    $teacher_stmt = $dbh->prepare("SELECT * FROM tblteacher");
+    $teacher_stmt->execute();
+    while ($t = $teacher_stmt->fetch(PDO::FETCH_ASSOC)) {
+        $id = $t['TeacherID'];
+        $teachers[$id] = $t;
+        $teachers[$id]['skills'] = [];
+        $teachers[$id]['experience'] = [];
+        $teachers[$id]['preferred_times'] = [];
+        $teachers[$id]['assigned_sections'] = 0;
+        $teachers[$id]['schedule_blocks'] = [];
+    }
 
-    // Build qualified instructor list (fuzzy/related skill match, or preferred instructor exception)
-    $qualified_ids = [];
-    foreach ($teachers as $tid => $tdata) {
-        if (!empty($subject_preferred_teachers[$subject_id]) && in_array($tid, $subject_preferred_teachers[$subject_id])) {
-            $qualified_ids[] = $tid;
-            continue;
+    // Fetch all skills (verified and not)
+    $skill_stmt = $dbh->prepare("SELECT TeacherID, SkillName FROM tblskills");
+    $skill_stmt->execute();
+    while ($row = $skill_stmt->fetch(PDO::FETCH_ASSOC)) {
+        $skills = array_map('trim', explode(',', strtolower($row['SkillName'])));
+        if (isset($teachers[$row['TeacherID']])) {
+            $teachers[$row['TeacherID']]['skills'] = array_merge($teachers[$row['TeacherID']]['skills'], $skills);
         }
-        if ($tdata['BachelorsVerified'] == 1 && !empty($tdata['skills'])) {
-            if (empty($subject_tags) || fuzzy_skill_match($tdata['skills'], $subject_tags)) {
+    }
+
+    // Experience
+    $exp_stmt = $dbh->prepare("SELECT TeacherID, SubjectsTaught FROM tblteachingload");
+    $exp_stmt->execute();
+    while ($row = $exp_stmt->fetch(PDO::FETCH_ASSOC)) {
+        $subjects = array_map('trim', explode(',', strtolower($row['SubjectsTaught'])));
+        if (isset($teachers[$row['TeacherID']])) {
+            $teachers[$row['TeacherID']]['experience'] = array_merge($teachers[$row['TeacherID']]['experience'], $subjects);
+        }
+    }
+
+    // Teacher preferred times
+    $pt_stmt = $dbh->prepare("SELECT teacher_id, day_of_week, time_slot FROM teacher_preferred_times");
+    $pt_stmt->execute();
+    while ($row = $pt_stmt->fetch(PDO::FETCH_ASSOC)) {
+        if (isset($teachers[$row['teacher_id']])) {
+            $teachers[$row['teacher_id']]['preferred_times'][] = strtolower($row['day_of_week']) . '-' . strtolower($row['time_slot']);
+        }
+    }
+
+    // Fetch subject skill tags (for fuzzy/related matching)
+    $qual_stmt = $dbh->prepare("SELECT subject_id, tags FROM tblqualification");
+    $qual_stmt->execute();
+    while ($row = $qual_stmt->fetch(PDO::FETCH_ASSOC)) {
+        $tags = array_map('trim', explode(',', strtolower($row['tags'])));
+        $subject_skill_tags[$row['subject_id']] = $tags;
+    }
+
+    // Helper: Time functions
+    function time_to_minutes($time) {
+        list($h, $m) = explode(':', $time);
+        return $h * 60 + $m;
+    }
+    function minutes_to_time($minutes) {
+        $h = floor($minutes / 60);
+        $m = $minutes % 60;
+        return sprintf('%02d:%02d', $h, $m);
+    }
+    function has_time_overlap($blocks, $day, $start_min, $end_min) {
+        foreach ($blocks as $block) {
+            if ($block['day'] === $day) {
+                if ($start_min < $block['end'] && $end_min > $block['start']) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    function fuzzy_skill_match($teacher_skills, $subject_tags) {
+        foreach ($teacher_skills as $skill) {
+            foreach ($subject_tags as $tag) {
+                if (strcasecmp($skill, $tag) === 0) return true;
+                if (levenshtein($skill, $tag) <= 2) return true;
+                if (stripos($skill, $tag) !== false || stripos($tag, $skill) !== false) return true;
+            }
+        }
+        return false;
+    }
+    function find_least_loaded_teacher($qualified_ids, &$teachers) {
+        $min = PHP_INT_MAX; $chosen = null;
+        foreach ($qualified_ids as $id) {
+            if ($teachers[$id]['assigned_sections'] < $min) {
+                $min = $teachers[$id]['assigned_sections'];
+                $chosen = $id;
+            }
+        }
+        return $chosen;
+    }
+
+    // For dropdown: all instructors + Professor XYZ
+    foreach ($teachers as $tid => $t) {
+        $instructor_dropdown[$tid] = $t['FirstName'].' '.$t['LastName'];
+    }
+    $instructor_dropdown['xyz'] = 'Professor XYZ';
+
+    // Day and slot/time mapping
+    $available_days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    $schedule_times = [
+        'morning' => ['start' => '07:30', 'end' => '11:30'],
+        'afternoon' => ['start' => '13:00', 'end' => '17:00'],
+        'evening' => ['start' => '17:30', 'end' => '20:30'],
+    ];
+
+    // -- Main Allocation Loop --
+    foreach ($subject_sections as $ss) {
+        $subject_id = $ss['subject_id'];
+        $section_id = $ss['section_id'];
+        $num_sections = intval($ss['section']);
+        $durations = [];
+        if (isset($ss['time_duration']) && trim($ss['time_duration']) !== '') {
+            $durations = array_map('intval', array_filter(array_map('trim', explode(',', $ss['time_duration']))));
+        }
+        if (empty($durations)) $durations = [90, 90];
+        $meetings_per_week = count($durations);
+        $subject_tags = $subject_skill_tags[$subject_id] ?? [];
+
+        // Qualified instructors
+        $qualified_ids = [];
+        foreach ($teachers as $tid => $tdata) {
+            if (!empty($subject_preferred_teachers[$subject_id]) && in_array($tid, $subject_preferred_teachers[$subject_id])) {
                 $qualified_ids[] = $tid;
+                continue;
             }
-        }
-    }
-    if (empty($qualified_ids)) {
-        $allocation_errors[] = "No qualified instructors found for subject '{$ss['SubjectName']}' (ID: {$subject_id}).";
-        continue;
-    }
-
-    for ($sec = 0; $sec < $num_sections; $sec++) {
-        $section_code = $section_letters[$sec] ?? ($sec+1);
-
-        // Assign instructor: always prioritize preferred (even if not qualified)
-        $preferred_ids = $subject_preferred_teachers[$subject_id] ?? [];
-        $assigned_teacher_id = null;
-        foreach ($preferred_ids as $pid) {
-            if (isset($teachers[$pid])) { $assigned_teacher_id = $pid; break; }
-        }
-        if (!$assigned_teacher_id) {
-            $assigned_teacher_id = find_least_loaded_teacher($qualified_ids, $teachers);
-        }
-        if (!$assigned_teacher_id) {
-            $allocation_errors[] = "No instructor can be assigned for subject '{$ss['SubjectName']}', section $section_code.";
-            continue;
-        }
-        $teacher = $teachers[$assigned_teacher_id];
-        $teachers[$assigned_teacher_id]['assigned_sections']++;
-
-        // Schedule block arrays
-        $instructor_blocks = $teachers[$assigned_teacher_id]['schedule_blocks'];
-        $section_blocks = isset($section_schedules[$section_id][$section_code]) ? $section_schedules[$section_id][$section_code] : [];
-        $assigned_meetings = [];
-        $used_days = []; // For different-day constraint
-
-        for ($m = 0; $m < $meetings_per_week; $m++) {
-            $duration_minutes = $durations[$m];
-            $meeting_assigned = false;
-            $day_slot_options = [];
-
-            // Preferred slots first
-            foreach ($available_days as $day) {
-                if (in_array($day, $used_days)) continue; // Don't reuse day for another meeting for this section/subject
-                foreach (['morning','afternoon','evening'] as $slot) {
-                    $pref_key = strtolower($day) . '-' . strtolower($slot);
-                    $is_preference = (isset($teacher['preferred_times']) && in_array($pref_key, $teacher['preferred_times']));
-                    if (!empty($teacher['preferred_times']) && !$is_preference) continue;
-                    $day_slot_options[] = [$day, $slot];
+            if ($tdata['BachelorsVerified'] == 1 && !empty($tdata['skills'])) {
+                if (empty($subject_tags) || fuzzy_skill_match($tdata['skills'], $subject_tags)) {
+                    $qualified_ids[] = $tid;
                 }
             }
-            // If still not found, try all slots (on unused days)
-            if (empty($day_slot_options)) {
-                foreach ($available_days as $day) {
-                    if (in_array($day, $used_days)) continue;
-                    foreach (['morning','afternoon','evening'] as $slot) {
-                        $day_slot_options[] = [$day, $slot];
-                    }
+        }
+        $no_qualified = empty($qualified_ids);
+
+        for ($sec = 0; $sec < $num_sections; $sec++) {
+            $section_code = $section_letters[$sec] ?? ($sec+1);
+            // If no qualified instructors: allocate to professor xyz, put at top
+            if ($no_qualified) {
+                for ($m = 0; $m < $meetings_per_week; $m++) {
+                    $duration_minutes = $durations[$m];
+                    $day = $available_days[$m % count($available_days)];
+                    $slot = array_keys($schedule_times)[$m % count($schedule_times)];
+                    $slot_time = $schedule_times[$slot];
+                    $slot_start_min = time_to_minutes($slot_time['start']);
+                    $block_start = $slot_start_min;
+                    $start_time = minutes_to_time($block_start);
+                    $end_time = minutes_to_time($block_start + $duration_minutes);
+                    $no_instructor_subjects[] = [
+                        'num' => $alloc_cnt++,
+                        'instructor_id' => 'xyz',
+                        'instructor' => 'Professor XYZ',
+                        'course' => $ss['CourseName'],
+                        'subject' => $ss['SubjectName'],
+                        'subject_code' => $ss['SubjectCode'],
+                        'year' => $ss['year_level'],
+                        'section' => $section_code,
+                        'day' => $day,
+                        'time' => "{$start_time} - {$end_time}",
+                        'duration' => $duration_minutes,
+                        'room' => '',
+                    ];
                 }
+                $allocation_errors[] = "No qualified instructors found for subject '{$ss['SubjectName']}' (ID: {$subject_id}).";
+                continue;
             }
 
-            foreach ($day_slot_options as $ds) {
-                list($day, $slot) = $ds;
+            // Otherwise, normal allocation
+            $preferred_ids = $subject_preferred_teachers[$subject_id] ?? [];
+            $assigned_teacher_id = null;
+            foreach ($preferred_ids as $pid) {
+                if (isset($teachers[$pid])) { $assigned_teacher_id = $pid; break; }
+            }
+            if (!$assigned_teacher_id) {
+                $assigned_teacher_id = find_least_loaded_teacher($qualified_ids, $teachers);
+            }
+            if (!$assigned_teacher_id) continue;
+            $teacher = $teachers[$assigned_teacher_id];
+            $teachers[$assigned_teacher_id]['assigned_sections']++;
+
+            for ($m = 0; $m < $meetings_per_week; $m++) {
+                $duration_minutes = $durations[$m];
+                $day = $available_days[$m % count($available_days)];
+                $slot = array_keys($schedule_times)[$m % count($schedule_times)];
                 $slot_time = $schedule_times[$slot];
                 $slot_start_min = time_to_minutes($slot_time['start']);
-                $slot_end_min = time_to_minutes($slot_time['end']);
-                for ($block_start = $slot_start_min; $block_start + $duration_minutes <= $slot_end_min; $block_start += 10) {
-                    $block_end = $block_start + $duration_minutes;
-                    if (!has_time_overlap($instructor_blocks, $day, $block_start, $block_end)
-                        && !has_time_overlap($section_blocks, $day, $block_start, $block_end)) {
-                        $start_time = minutes_to_time($block_start);
-                        $end_time = minutes_to_time($block_end);
-                        $assigned_meetings[] = [
-                            'day' => $day,
-                            'time' => "{$start_time} - {$end_time}",
-                            'duration' => $duration_minutes,
-                            'room' => '' // default empty, editable
-                        ];
-                        $instructor_blocks[] = ['day'=>$day, 'start'=>$block_start, 'end'=>$block_end];
-                        $section_blocks[] = ['day'=>$day, 'start'=>$block_start, 'end'=>$block_end];
-                        $used_days[] = $day;
-                        $meeting_assigned = true;
-                        break 2;
-                    }
-                }
+                $start_time = minutes_to_time($slot_start_min);
+                $end_time = minutes_to_time($slot_start_min + $duration_minutes);
+                $allocations[] = [
+                    'num' => $alloc_cnt++,
+                    'instructor_id' => $assigned_teacher_id,
+                    'instructor' => $teacher['FirstName'] . ' ' . $teacher['LastName'],
+                    'course' => $ss['CourseName'],
+                    'subject' => $ss['SubjectName'],
+                    'subject_code' => $ss['SubjectCode'],
+                    'year' => $ss['year_level'],
+                    'section' => $section_code,
+                    'day' => $day,
+                    'time' => "{$start_time} - {$end_time}",
+                    'duration' => $duration_minutes,
+                    'room' => ''
+                ];
             }
-            if (!$meeting_assigned) {
-                $allocation_errors[] = "Could not assign meeting ".($m+1)." (duration {$duration_minutes} min) for subject '{$ss['SubjectName']}', section $section_code. No available time slot found.";
-            }
-        }
-        $teachers[$assigned_teacher_id]['schedule_blocks'] = $instructor_blocks;
-        $section_schedules[$section_id][$section_code] = $section_blocks;
-
-        // Save allocations (one row per meeting/session)
-        foreach ($assigned_meetings as $idx => $meeting) {
-            $allocations[] = [
-                'num' => $alloc_cnt++,
-                'instructor' => $teacher['FirstName'] . ' ' . $teacher['LastName'],
-                'course' => $ss['CourseName'],
-                'subject' => $ss['SubjectName'],
-                'subject_code' => $ss['SubjectCode'],
-                'year' => $ss['year_level'],
-                'section' => $section_code,
-                'day' => $meeting['day'],
-                'time' => $meeting['time'],
-                'duration' => $meeting['duration'],
-                'room' => $meeting['room']
-            ];
         }
     }
 }
@@ -300,7 +286,7 @@ foreach ($subject_sections as $ss) {
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>TSAS : Auto-Generated Allocation Table</title>
+    <title>TSAS : Auto-Generated Subject Allocation Table</title>
     <link href="../assets/css/lib/font-awesome.min.css" rel="stylesheet">
     <link href="../assets/css/lib/themify-icons.css" rel="stylesheet">
     <link href="../assets/css/lib/menubar/sidebar.css" rel="stylesheet">
@@ -308,10 +294,62 @@ foreach ($subject_sections as $ss) {
     <link href="../assets/css/lib/unix.css" rel="stylesheet">
     <link href="../assets/css/style.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
         .auto-table-box { background:#fff; border-radius:12px; padding:25px 25px;margin-top:25px;}
         .auto-table-box h4 { margin-bottom: 18px; }
         .auto-alloc-table th, .auto-alloc-table td { text-align:center; vertical-align:middle; }
+        .no-instructor-row { background: #ffe0ef !important; }
+        .dropdown-modern {
+            border-radius: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+            background: #f8faff;
+            padding: 2px 8px;
+            border: 1px solid #cfd8dc;
+            font-weight: 600;
+            color: #333;
+            transition: border-color 0.2s;
+        }
+        .dropdown-modern:focus {
+            outline: none;
+            border-color: #1976d2;
+            box-shadow: 0 0 0 2px #1976d214;
+        }
+        .dropdown-modern option {
+            color: #222;
+            font-weight: 500;
+        }
+        .aysem-display {
+            border-radius: 14px;
+            background: #f5f7fa;
+            margin: 24px 0 18px 0;
+            padding: 12px 30px 12px 28px;
+            display: flex;
+            align-items: center;
+            gap: 35px;
+            box-shadow: 0 2px 12px #e3e8f0;
+        }
+        .aysem-display-label {
+            font-weight: bold;
+            color: #1976d2;
+            font-size: 1.06em;
+        }
+        .aysem-display-value {
+            background: #e3f2fd;
+            border-radius: 8px;
+            padding: 2px 15px;
+            font-weight: 600;
+            color: #333;
+            font-size: 1.04em;
+        }
+        .dropdown-prof {
+            min-width: 165px;
+            max-width: 260px;
+            background: #f8faff;
+        }
+        @media (max-width: 767px) {
+            .aysem-display { flex-direction: column; align-items: flex-start; padding: 10px 12px; gap: 8px; }
+        }
     </style>
 </head>
 <body>
@@ -322,11 +360,39 @@ foreach ($subject_sections as $ss) {
         <div class="container-fluid">
             <div class="row">
                 <div class="col-lg-12">
+                    <!-- HEADER PART: DO NOT REMOVE -->
                     <div class="page-header">
                         <div class="page-title">
                             <h1>Auto-Generated Subject Allocation Table</h1>
                         </div>
                     </div>
+                    <!-- Academic Year & Semester: Place here as requested -->
+                    <form method="post" action="auto-allocation.php" class="mb-3 mt-4">
+                        <div class="aysem-display">
+                            <div>
+                                <span class="aysem-display-label"><i class="bi bi-calendar2-week"></i> Academic Year</span>
+                                <select name="academic_year" class="dropdown-modern" style="margin-left:3px;">
+                                    <?php foreach ($academic_years as $ay): ?>
+                                        <option value="<?= htmlentities($ay) ?>" <?= $selected_year==$ay?'selected':'' ?>><?= htmlentities($ay) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div>
+                                <span class="aysem-display-label"><i class="bi bi-calendar3"></i> Semester</span>
+                                <select name="semester" class="dropdown-modern" style="margin-left:3px;">
+                                    <?php foreach ($semesters as $sem): ?>
+                                        <option value="<?= htmlentities($sem) ?>" <?= $selected_sem==$sem?'selected':'' ?>><?= htmlentities($sem) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-arrow-repeat"></i> View Allocations
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                    <?php if ($show_table): ?>
                     <div class="auto-table-box card alert">
                         <div class="card-header">
                             <h4>Allocation Results</h4>
@@ -344,6 +410,8 @@ foreach ($subject_sections as $ss) {
                             <?php endif; ?>
                             <div class="table-responsive">
                                 <form method="post" action="save-rooms.php">
+                                <input type="hidden" name="academic_year" value="<?= htmlentities($selected_year) ?>">
+                                <input type="hidden" name="semester" value="<?= htmlentities($selected_sem) ?>">
                                 <table id="allocationTable" class="table table-striped">
                                     <thead>
                                         <tr>
@@ -361,10 +429,41 @@ foreach ($subject_sections as $ss) {
                                         </tr>
                                     </thead>
                                     <tbody>
+                                    <?php foreach ($no_instructor_subjects as $idx => $alloc): ?>
+                                        <tr class="no-instructor-row">
+                                            <td><?= $alloc['num'] ?></td>
+                                            <td>
+                                                <select name="instructor_no[<?= $idx ?>]" class="dropdown-modern dropdown-prof">
+                                                    <?php foreach ($instructor_dropdown as $tid => $name): ?>
+                                                        <option value="<?= $tid ?>" <?= $tid=='xyz'?'selected':'' ?>><?= htmlentities($name) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </td>
+                                            <td><?= htmlentities($alloc['course']) ?></td>
+                                            <td><?= htmlentities($alloc['subject']) ?></td>
+                                            <td><?= htmlentities($alloc['subject_code']) ?></td>
+                                            <td><?= htmlentities($alloc['year']) ?></td>
+                                            <td><?= htmlentities($alloc['section']) ?></td>
+                                            <td><?= htmlentities($alloc['day']) ?></td>
+                                            <td><?= htmlentities($alloc['time']) ?></td>
+                                            <td><?= htmlentities($alloc['duration']) ?></td>
+                                            <td>
+                                                <input type="text" name="room_noinstructor[<?= $idx ?>]" class="form-control" value="<?= isset($alloc['room']) ? htmlentities($alloc['room']) : '' ?>">
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
                                     <?php foreach ($allocations as $idx => $alloc): ?>
                                         <tr>
                                             <td><?= $alloc['num'] ?></td>
-                                            <td><?= htmlentities($alloc['instructor']) ?></td>
+                                            <td>
+                                                <select name="instructor[<?= $idx ?>]" class="dropdown-modern dropdown-prof">
+                                                    <?php foreach ($instructor_dropdown as $tid => $name): ?>
+                                                        <option value="<?= $tid ?>" <?= $alloc['instructor_id']==$tid?'selected':'' ?>>
+                                                            <?= htmlentities($name) ?>
+                                                        </option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </td>
                                             <td><?= htmlentities($alloc['course']) ?></td>
                                             <td><?= htmlentities($alloc['subject']) ?></td>
                                             <td><?= htmlentities($alloc['subject_code']) ?></td>
@@ -378,7 +477,7 @@ foreach ($subject_sections as $ss) {
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
-                                    <?php if (empty($allocations)): ?>
+                                    <?php if (empty($allocations) && empty($no_instructor_subjects)): ?>
                                         <tr><td colspan="11"><i>No allocation generated.</i></td></tr>
                                     <?php endif; ?>
                                     </tbody>
@@ -389,6 +488,7 @@ foreach ($subject_sections as $ss) {
                         </div>
                         <a href="subject-allocation.php" class="btn btn-secondary mt-3">Back to Subject Allocation</a>
                     </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>

@@ -113,8 +113,6 @@ document.getElementById('add-subject-btn').addEventListener('click', function() 
             <option value="2nd">2nd</option>
         </select>
 
-        <div class="text-danger mt-1 d-none duplicate-warning">Duplicate entry detected.</div>
-
         <button type="button" class="btn btn-danger btn-sm mt-2 remove-subject">Remove</button>
     `;
 

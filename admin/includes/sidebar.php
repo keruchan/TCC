@@ -12,9 +12,7 @@
                     <li><a href="time.php"><i class="ti-files"></i>Time Management</a></li>
 
                      
-                
-                    <li class="label">Apps</li>
-                    <li><a class="sidebar-sub-toggle"><i class="ti-user"></i>  Teacher  <span class="sidebar-collapse-icon ti-angle-down"></span></a>
+                        <li><a class="sidebar-sub-toggle"><i class="ti-user"></i>  Teacher  <span class="sidebar-collapse-icon ti-angle-down"></span></a>
                         <ul>
                              <li><a href="add-teacher.php">Add Teacher</a>
                     </li>
@@ -22,6 +20,8 @@
                            
                         </ul>
                     </li>
+                     <li class="label">Allocation</li>
+
                       <li><a href="subject-allocation.php"><i class="ti-files"></i>Subject Allocation</a>
                       <li><a href="auto-allocation.php"><i class="ti-files"></i>Allocated Subjects</a>
                     </li>

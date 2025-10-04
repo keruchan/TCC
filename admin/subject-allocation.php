@@ -9,7 +9,7 @@ if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
     exit;
 }
 
-$academic_years = ['2024-25', '2025-26', '2026-27', '2027-28'];
+$academic_years = ['2024-25', '2025-26', '2026-27', '2027-28', '2028-29', '2029-30', '2030-31'];
 $semesters = ['1st', '2nd', 'summer'];
 $year_levels = ['1st', '2nd', '3rd', '4th'];
 

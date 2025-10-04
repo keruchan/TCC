@@ -4,10 +4,22 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 include('includes/dbconnection.php');
 
+// CSRF protection
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Authentication
 if (strlen($_SESSION['tsasaid'] ?? '') == 0) {
     header('location:logout.php');
     exit;
+}
+
+// Success/error messaging from finalize-schedule.php
+$feedback = '';
+if (isset($_SESSION['alloc_feedback'])) {
+    $feedback = $_SESSION['alloc_feedback'];
+    unset($_SESSION['alloc_feedback']);
 }
 
 // Fetch academic years and semesters for dropdowns
@@ -19,16 +31,19 @@ $sem_stmt = $dbh->prepare("SELECT DISTINCT semester FROM tblclass ORDER BY semes
 $sem_stmt->execute();
 $semesters = $sem_stmt->fetchAll(PDO::FETCH_COLUMN);
 
-// Get selected year/sem (from POST or default to latest)
-$selected_year = $_POST['academic_year'] ?? ($academic_years[0] ?? '');
-$selected_sem = $_POST['semester'] ?? ($semesters[0] ?? '');
+// Get selected year/sem (from POST or from GET or default to latest)
+$selected_year = $_POST['academic_year'] ?? $_GET['academic_year'] ?? ($academic_years[0] ?? '');
+$selected_sem = $_POST['semester'] ?? $_GET['semester'] ?? ($semesters[0] ?? '');
 $priorities = explode(',', $_POST['priorities'] ?? 'skills,educ,exp');
 
 // Only process allocation if form is submitted (View Allocations pressed)
-$show_table = ($_SERVER['REQUEST_METHOD'] === "POST" && isset($_POST['academic_year']) && isset($_POST['semester']));
+$show_table = (
+    ($_SERVER['REQUEST_METHOD'] === "POST" && isset($_POST['academic_year']) && isset($_POST['semester'])) ||
+    (isset($_GET['academic_year']) && isset($_GET['semester']))
+);
 
 // Priority log
-if ($show_table && !empty($priorities)) {
+if ($show_table && !empty($priorities) && $_SERVER['REQUEST_METHOD'] === "POST") {
     $priority_order = implode(',', $priorities);
     $priority_log_stmt = $dbh->prepare("INSERT INTO tblallocation_priority_log (academic_year, semester, priority_order, generated_by, date_generated) VALUES (?, ?, ?, ?, NOW())");
     $priority_log_stmt->execute([$selected_year, $selected_sem, $priority_order, $_SESSION['tsasaid']]);
@@ -45,6 +60,19 @@ $allocation_errors = [];
 $alloc_cnt = 1;
 $section_letters = range('A', 'Z');
 $instructor_dropdown = [];
+
+$finalized_data = [];
+
+// If available, get finalized schedules for selected year/sem
+if ($show_table) {
+    $finalized_stmt = $dbh->prepare("SELECT * FROM finalize_schedules WHERE academic_year = ? AND semester = ?");
+    $finalized_stmt->execute([$selected_year, $selected_sem]);
+    while ($row = $finalized_stmt->fetch(PDO::FETCH_ASSOC)) {
+        // Key: subject_id|section|day_of_week|start_time|end_time
+        $key = $row['subject_id'].'|'.$row['section'].'|'.$row['day_of_week'].'|'.$row['start_time'].'|'.$row['end_time'];
+        $finalized_data[$key] = $row;
+    }
+}
 
 if ($show_table) {
     // Fetch all subject-sections, including time_duration
@@ -128,7 +156,7 @@ if ($show_table) {
 
     // Helper: Time functions
     function time_to_minutes($time) {
-        list($h, $m) = explode(':', $time);
+        list($h, $m, $s) = array_pad(explode(':', $time), 3, 0);
         return $h * 60 + $m;
     }
     function minutes_to_time($minutes) {
@@ -226,22 +254,51 @@ if ($show_table) {
                 $block_start = $slot_start_min;
                 $start_time = minutes_to_time($block_start);
                 $end_time = minutes_to_time($block_start + $duration_minutes);
+
+                // Check if there is a finalized record for this allocation
+                $key = $subject_id.'|'.$section_code.'|'.$day.'|'.$start_time.':00|'.$end_time.':00';
+                if (isset($finalized_data[$key])) {
+                    $fin = $finalized_data[$key];
+                    $instructor_id = $fin['instructor_id'];
+                    $instructor = $fin['instructor_name'];
+                    $room = $fin['room'];
+                    // Use finalized data for all fields if exists
+                    $course = $fin['course'];
+                    $subject = $fin['subject_name'];
+                    $subject_code = $fin['subject_code'];
+                    $year = $fin['year_level'];
+                    $actual_section = $fin['section'];
+                    $day = $fin['day_of_week'];
+                    $start_time = substr($fin['start_time'],0,5);
+                    $end_time = substr($fin['end_time'],0,5);
+                    $duration_minutes = $fin['duration_minutes'];
+                } else {
+                    $instructor_id = $no_qualified ? 'xyz' : null;
+                    $instructor = $no_qualified ? 'Professor XYZ' : '';
+                    $room = '';
+                    $course = $ss['CourseName'];
+                    $subject = $ss['SubjectName'];
+                    $subject_code = $ss['SubjectCode'];
+                    $year = $ss['year_level'];
+                    $actual_section = $section_code;
+                }
+
                 $row = [
                     'section_uid' => $section_uid,
                     'meeting_idx' => $m,
                     'num' => $alloc_cnt++,
-                    'instructor_id' => $no_qualified ? 'xyz' : null,
-                    'instructor' => $no_qualified ? 'Professor XYZ' : '',
-                    'course' => $ss['CourseName'],
+                    'instructor_id' => $instructor_id,
+                    'instructor' => $instructor,
+                    'course' => $course,
                     'subject_id' => $subject_id,
-                    'subject' => $ss['SubjectName'],
-                    'subject_code' => $ss['SubjectCode'],
-                    'year' => $ss['year_level'],
-                    'section' => $section_code,
+                    'subject' => $subject,
+                    'subject_code' => $subject_code,
+                    'year' => $year,
+                    'section' => $actual_section,
                     'day' => $day,
                     'time' => "{$start_time} - {$end_time}",
                     'duration' => $duration_minutes,
-                    'room' => '',
+                    'room' => $room,
                     'no_qualified' => $no_qualified,
                     'section_id' => $section_id,
                 ];
@@ -263,8 +320,11 @@ if ($show_table) {
                 }
                 if (!$assigned_teacher_id) continue;
                 foreach ($rows as &$row_ref) {
-                    $row_ref['instructor_id'] = $assigned_teacher_id;
-                    $row_ref['instructor'] = $teachers[$assigned_teacher_id]['FirstName'].' '.$teachers[$assigned_teacher_id]['LastName'];
+                    // Only override if not already finalized
+                    if (!isset($finalized_data[$subject_id.'|'.$row_ref['section'].'|'.$row_ref['day'].'|'.explode(' - ', $row_ref['time'])[0].':00|'.explode(' - ', $row_ref['time'])[1].':00'])) {
+                        $row_ref['instructor_id'] = $assigned_teacher_id;
+                        $row_ref['instructor'] = $teachers[$assigned_teacher_id]['FirstName'].' '.$teachers[$assigned_teacher_id]['LastName'];
+                    }
                 }
                 unset($row_ref);
                 $allocations_by_section[$section_uid] = $rows;
@@ -274,11 +334,12 @@ if ($show_table) {
     }
 
     // Now, for each section_uid, compute valid instructor choices (no conflict for ALL meetings)
+    // Professor XYZ should always be available in every dropdown (for "to be determined")
     $dropdown_valid_instructors = [];
     foreach ($allocations_by_section as $section_uid => $meetings) {
         $valid = [];
         foreach ($instructor_dropdown as $tid => $name) {
-            if ($tid === 'xyz') continue;
+            if ($tid === 'xyz') continue; // Add at end, always
             $has_conflict = false;
             foreach ($meetings as $row) {
                 $row_times = explode(' - ', $row['time']);
@@ -314,16 +375,15 @@ if ($show_table) {
             }
             if (!$has_conflict) $valid[$tid] = $name;
         }
+        // Always make Professor XYZ available
+        $valid['xyz'] = 'Professor XYZ';
         $dropdown_valid_instructors[$section_uid] = $valid;
     }
     foreach ($no_instructor_subjects as $section_uid => $meetings) {
         $valid = [];
         foreach ($instructor_dropdown as $tid => $name) {
+            if ($tid === 'xyz') continue;
             $has_conflict = false;
-            if ($tid === 'xyz') {
-                $valid[$tid] = $name;
-                continue;
-            }
             foreach ($meetings as $row) {
                 $row_times = explode(' - ', $row['time']);
                 $row_start = time_to_minutes($row_times[0]);
@@ -357,6 +417,8 @@ if ($show_table) {
             }
             if (!$has_conflict) $valid[$tid] = $name;
         }
+        // Always make Professor XYZ available
+        $valid['xyz'] = 'Professor XYZ';
         $dropdown_valid_instructors[$section_uid] = $valid;
     }
 }
@@ -470,26 +532,56 @@ if ($show_table) {
                             </div>
                         </div>
                     </form>
+                    <?php if ($feedback): ?>
+                        <div class="alert alert-<?= strpos($feedback, 'success') !== false ? 'success' : 'danger' ?>">
+                            <?= htmlentities($feedback) ?>
+                        </div>
+                    <?php endif; ?>
                     <?php if ($show_table): ?>
                     <div class="auto-table-box card alert">
                         <div class="card-header">
                             <h4>Allocation Results</h4>
                         </div>
                         <div class="card-body">
-                            <?php if (!empty($allocation_errors)): ?>
+                            <?php
+                            // Only show warnings for subjects that STILL have no instructor (not even in finalize_schedules)
+                            if (!empty($allocation_errors)) {
+                                $real_errors = [];
+                                foreach ($no_instructor_subjects as $section_uid => $meetings) {
+                                    $all_no_instructor = true;
+                                    foreach ($meetings as $row) {
+                                        if (!empty($row['instructor_id']) && $row['instructor_id'] !== 'xyz') {
+                                            $all_no_instructor = false;
+                                            break;
+                                        }
+                                    }
+                                    if ($all_no_instructor) {
+                                        foreach ($allocation_errors as $err) {
+                                            if (strpos($err, $row['subject']) !== false && !in_array($err, $real_errors)) {
+                                                $real_errors[] = $err;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (!empty($real_errors)) {
+                            ?>
                                 <div class="alert alert-danger">
                                     <b>Allocation Warnings/Errors:</b>
                                     <ul>
-                                        <?php foreach ($allocation_errors as $err): ?>
+                                        <?php foreach ($real_errors as $err): ?>
                                             <li><?= htmlentities($err) ?></li>
                                         <?php endforeach; ?>
                                     </ul>
                                 </div>
-                            <?php endif; ?>
+                            <?php
+                                }
+                            }
+                            ?>
                             <div class="table-responsive">
                                 <form method="post" action="finalize-schedule.php" id="allocForm">
                                 <input type="hidden" name="academic_year" value="<?= htmlentities($selected_year) ?>">
                                 <input type="hidden" name="semester" value="<?= htmlentities($selected_sem) ?>">
+                                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                                 <table id="allocationTable" class="table table-striped">
                                     <thead>
                                         <tr>
@@ -510,7 +602,11 @@ if ($show_table) {
                                     <!-- For no instructor sections -->
                                     <?php foreach ($no_instructor_subjects as $section_uid => $meetings): ?>
                                         <?php foreach ($meetings as $row_idx => $alloc): ?>
-                                            <tr class="no-instructor-row">
+                                            <?php
+                                            // If there is an instructor (finalized or not 'xyz'), do not show pink bg
+                                            $tr_class = ($alloc['no_qualified'] && (empty($alloc['instructor_id']) || $alloc['instructor_id'] == 'xyz')) ? "no-instructor-row" : "";
+                                            ?>
+                                            <tr<?= $tr_class ? ' class="'.$tr_class.'"' : '' ?>>
                                                 <td><?= $alloc['num'] ?></td>
                                                 <td>
                                                     <select name="instructor_no[<?= $section_uid ?>][]" 
